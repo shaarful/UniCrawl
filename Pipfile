@@ -1,0 +1,28 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+django = ">=5.2,<7.0"
+djangorestframework = "*"
+django-environ = "*"
+psycopg = {extras = ["binary"], version = "*"}
+celery = {extras = ["redis"], version = "*"}
+redis = "*"
+httpx = {extras = ["http2"], version = "*"}
+feedparser = "*"
+beautifulsoup4 = "*"
+lxml = "*"
+trafilatura = "*"
+langdetect = "*"
+structlog = "*"
+
+[dev-packages]
+pytest = "*"
+pytest-django = "*"
+ruff = "*"
+
+[requires]
+python_version = "3.13"
+python_full_version = "3.13.3"

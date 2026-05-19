@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Environment
+# .env is committed for cross-machine dev continuity — DO NOT add real secrets here.
+# Production deployments must override SECRET_KEY and any token vars out-of-band.
+.env.local
+
+# Django
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+media/
+staticfiles/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# Test / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+
+# Ruff / mypy
+.ruff_cache/
+.mypy_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Claude Code (user-local; shared settings would be .claude/settings.json)
+.claude/settings.local.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# SRS extraction artifacts
+srs/_extracted/

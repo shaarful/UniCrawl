@@ -1,0 +1,133 @@
+"""Django settings for the UniCrawl service.
+
+Skeleton settings — values are environment-driven via django-environ.
+See SRS RZDO_EWS_SRS_v1.5 sections 2.4 (Operating Environment) and 4 (NFRs).
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+import environ
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+env = environ.Env(
+    DJANGO_DEBUG=(bool, False),
+    DJANGO_ALLOWED_HOSTS=(list, ["localhost", "127.0.0.1"]),
+    CRAWLER_DEFAULT_INTERVAL_SECONDS=(int, 3600),
+    CRAWLER_RETRY_BACKOFF_MINUTES=(list, [1, 4, 16]),
+    CRAWLER_SEMANTIC_DEDUP_THRESHOLD=(float, 0.85),
+)
+environ.Env.read_env(BASE_DIR / ".env")
+
+SECRET_KEY = env("DJANGO_SECRET_KEY", default="dev-insecure-key-change-me")
+DEBUG = env("DJANGO_DEBUG")
+ALLOWED_HOSTS = env("DJANGO_ALLOWED_HOSTS")
+
+INSTALLED_APPS = [
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+    "rest_framework",
+    "sources.apps.SourcesConfig",
+    "raw_content.apps.RawContentConfig",
+    "crawler.apps.CrawlerConfig",
+    "health.apps.HealthConfig",
+]
+
+MIDDLEWARE = [
+    "django.middleware.security.SecurityMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
+]
+
+ROOT_URLCONF = "unicrawl.urls"
+
+TEMPLATES = [
+    {
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [],
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.request",
+                "django.contrib.auth.context_processors.auth",
+                "django.contrib.messages.context_processors.messages",
+            ],
+        },
+    },
+]
+
+WSGI_APPLICATION = "unicrawl.wsgi.application"
+ASGI_APPLICATION = "unicrawl.asgi.application"
+
+# SRS §6.1: PostgreSQL 18+ with PostGIS. Falls back to sqlite for skeleton bring-up.
+DATABASES = {
+    "default": env.db_url(
+        "DATABASE_URL",
+        default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
+    ),
+}
+
+CACHES = {
+    "default": env.cache_url("REDIS_URL", default="locmemcache://"),
+}
+
+CELERY_BROKER_URL = env("CELERY_BROKER_URL", default="memory://")
+CELERY_RESULT_BACKEND = env("CELERY_RESULT_BACKEND", default="cache+memory://")
+CELERY_TASK_DEFAULT_QUEUE = "unicrawl.default"
+
+# Crawler tunables (FR-10, FR-11/23, FR-14)
+CRAWLER_DEFAULT_INTERVAL_SECONDS = env("CRAWLER_DEFAULT_INTERVAL_SECONDS")
+CRAWLER_RETRY_BACKOFF_MINUTES = [int(x) for x in env("CRAWLER_RETRY_BACKOFF_MINUTES")]
+CRAWLER_SEMANTIC_DEDUP_THRESHOLD = env("CRAWLER_SEMANTIC_DEDUP_THRESHOLD")
+
+LLM_QUEUE_NAME = env("LLM_QUEUE_NAME", default="unicrawl.matched_articles")
+
+EIOS_API_BASE_URL = env("EIOS_API_BASE_URL", default="")
+EIOS_API_TOKEN = env("EIOS_API_TOKEN", default="")
+
+AUTH_PASSWORD_VALIDATORS = [
+    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+]
+
+LANGUAGE_CODE = "en-us"
+TIME_ZONE = "UTC"
+USE_I18N = True
+USE_TZ = True
+
+STATIC_URL = "static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+REST_FRAMEWORK = {
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "PAGE_SIZE": 50,
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework.authentication.SessionAuthentication",
+    ],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
+}
+
+# Structured JSON logs (NFR §4.2.2). Replace with structlog config when wiring up.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {"class": "logging.StreamHandler"},
+    },
+    "root": {"handlers": ["console"], "level": "INFO"},
+}
