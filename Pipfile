@@ -17,6 +17,9 @@ lxml = "*"
 trafilatura = "*"
 langdetect = "*"
 structlog = "*"
+numpy = "*"
+# Pulls in PyTorch (~2 GB). Run `pipenv install` after adding to enable semantic dedup.
+sentence-transformers = "*"
 
 [dev-packages]
 pytest = "*"

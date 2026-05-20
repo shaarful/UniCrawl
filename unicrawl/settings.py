@@ -17,6 +17,9 @@ env = environ.Env(
     CRAWLER_DEFAULT_INTERVAL_SECONDS=(int, 3600),
     CRAWLER_RETRY_BACKOFF_MINUTES=(list, [1, 4, 16]),
     CRAWLER_SEMANTIC_DEDUP_THRESHOLD=(float, 0.85),
+    CRAWLER_SEMANTIC_DEDUP_ENABLED=(bool, False),
+    CRAWLER_SEMANTIC_MODEL=(str, "paraphrase-multilingual-MiniLM-L12-v2"),
+    CRAWLER_SEMANTIC_MAX_CANDIDATES=(int, 10_000),
 )
 environ.Env.read_env(BASE_DIR / ".env")
 
@@ -36,6 +39,7 @@ INSTALLED_APPS = [
     "raw_content.apps.RawContentConfig",
     "crawler.apps.CrawlerConfig",
     "health.apps.HealthConfig",
+    "disease_keywords.apps.DiseaseKeywordsConfig",
 ]
 
 MIDDLEWARE = [
@@ -76,6 +80,8 @@ DATABASES = {
     ),
 }
 
+REDIS_URL = env("REDIS_URL", default="redis://localhost:6379/0")
+
 CACHES = {
     "default": env.cache_url("REDIS_URL", default="locmemcache://"),
 }
@@ -84,10 +90,23 @@ CELERY_BROKER_URL = env("CELERY_BROKER_URL", default="memory://")
 CELERY_RESULT_BACKEND = env("CELERY_RESULT_BACKEND", default="cache+memory://")
 CELERY_TASK_DEFAULT_QUEUE = "unicrawl.default"
 
+# Beat: poll for due sources every 30 s (FR-10)
+CELERY_BEAT_SCHEDULE = {
+    "crawler-tick": {
+        "task": "crawler.tasks.tick",
+        "schedule": 30.0,
+    },
+}
+
 # Crawler tunables (FR-10, FR-11/23, FR-14)
 CRAWLER_DEFAULT_INTERVAL_SECONDS = env("CRAWLER_DEFAULT_INTERVAL_SECONDS")
 CRAWLER_RETRY_BACKOFF_MINUTES = [int(x) for x in env("CRAWLER_RETRY_BACKOFF_MINUTES")]
 CRAWLER_SEMANTIC_DEDUP_THRESHOLD = env("CRAWLER_SEMANTIC_DEDUP_THRESHOLD")
+# Semantic dedup is opt-in: the model (~420 MB) is downloaded on first use.
+# Enable only after running: pipenv install sentence-transformers
+CRAWLER_SEMANTIC_DEDUP_ENABLED = env("CRAWLER_SEMANTIC_DEDUP_ENABLED")
+CRAWLER_SEMANTIC_MODEL = env("CRAWLER_SEMANTIC_MODEL")
+CRAWLER_SEMANTIC_MAX_CANDIDATES = env("CRAWLER_SEMANTIC_MAX_CANDIDATES")
 
 LLM_QUEUE_NAME = env("LLM_QUEUE_NAME", default="unicrawl.matched_articles")
 

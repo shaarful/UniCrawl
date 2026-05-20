@@ -86,6 +86,15 @@ class RawArticle(models.Model):
         blank=True,
     )
 
+    # --- Semantic dedup embedding (FR-23, Layer 3) ---
+    # Stored as JSON list[float] for DB portability; migrate to pgvector VectorField
+    # once the production PostgreSQL has the pgvector extension installed.
+    embedding = models.JSONField(
+        null=True,
+        blank=True,
+        help_text="Sentence-transformer embedding vector (384 dims). Used for semantic dedup.",
+    )
+
     # --- Keyword match (FR-08) ---
     is_keyword_matched = models.BooleanField(
         default=False,
