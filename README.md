@@ -396,49 +396,132 @@ All settings are environment-variable-driven via `django-environ`. Copy `.env.ex
 
 ## Development Setup
 
-**Prerequisites:** Python 3.13, pipenv, PostgreSQL (or use the SQLite fallback for local dev), Redis.
+### Prerequisites
+
+| Tool | Version | Notes |
+|---|---|---|
+| Python | 3.13 | `python --version` to confirm |
+| pipenv | latest | `pip install pipenv` |
+| Git | any | |
+| Redis | 7+ | Only needed for automated scheduling and publisher. See below. |
+| PostgreSQL | 18+ | Optional — SQLite is the default fallback for local dev. |
+
+### 1. Clone and install
 
 ```powershell
-# Clone and enter the repo
-git clone <repo-url>
+git clone https://github.com/shaarful/UniCrawl.git
 cd UniCrawl
 
-# Install all dependencies (including dev)
+# Install all dependencies (app + dev tools)
 pipenv install --dev
+```
 
-# Activate the virtual environment
-pipenv shell
+### 2. Configure environment
 
-# Copy and edit environment config
-cp .env.example .env
+The `.env` file is already present with SQLite as the DB fallback and sensible defaults. No changes are needed to start:
 
-# Apply database migrations
-python manage.py migrate
+```powershell
+# (Optional) Review or adjust settings
+notepad .env
+```
 
-# Create a Django superuser (for the admin UI)
-python manage.py createsuperuser
+Key defaults that let you run without Redis or PostgreSQL:
+
+```
+# DATABASE_URL is commented out → falls back to SQLite (db.sqlite3)
+CELERY_BROKER_URL=redis://localhost:6379/1   # only needed for background scheduling
+REDIS_URL=redis://localhost:6379/0           # only needed when publisher fires
+```
+
+### 3. Apply migrations
+
+```powershell
+pipenv run python manage.py migrate
+```
+
+### 4. Create a superuser
+
+```powershell
+pipenv run python manage.py createsuperuser
+```
+
+### 5. Seed dev data and run a live crawl
+
+A single command loads disease keywords and three real news sources, then immediately crawls them:
+
+```powershell
+pipenv run python manage.py seed_dev --crawl
+```
+
+This creates:
+- **16 disease keywords** (dengue, cholera, mpox, avian influenza, ebola, and others)
+- **3 sources** — Outbreak News Today (RSS), ReliefWeb Health Alerts (RSS), WHO Disease Outbreak News (HTML)
+
+On a clean run it fetches ~30 articles and keyword-matches the disease-relevant ones. Re-running the command is safe — it skips records that already exist. To wipe and start over:
+
+```powershell
+pipenv run python manage.py seed_dev --reset --crawl
+```
+
+### 6. Start the Django server
+
+```powershell
+pipenv run python manage.py runserver
+```
+
+### 7. Explore the results
+
+| URL | What you'll find |
+|---|---|
+| `http://127.0.0.1:8000/health/` | Liveness check — `{"status": "ok"}` |
+| `http://127.0.0.1:8000/admin/` | Django admin — browse articles, sources, keywords |
+| `http://127.0.0.1:8000/admin/raw_content/rawarticle/` | All crawled articles with status and matched diseases |
+| `http://127.0.0.1:8000/admin/sources/source/` | Configured sources with last-crawl timestamps |
+| `http://127.0.0.1:8000/admin/disease_keywords/diseasekeyword/` | Active keyword list |
+| `http://127.0.0.1:8000/sources/` | REST API for source CRUD |
+
+### Triggering a crawl manually (no Celery needed)
+
+```powershell
+pipenv run python manage.py shell
+```
+```python
+from crawler.pipeline import run_for_source
+from sources.models import Source
+
+run_for_source(Source.objects.first().id)
 ```
 
 ---
 
-## Running the Service
+## Running the Full Stack (automated scheduling)
 
-Three processes must run concurrently:
+For automated crawls you need Redis running and three processes in separate terminals.
 
-```bash
-# 1. Django application server
-python manage.py runserver
+**Start Redis** (Docker is the easiest option on Windows):
 
-# 2. Celery worker — processes crawl_source tasks
-celery -A unicrawl worker -l info
-
-# 3. Celery beat — fires the tick task every 30 s
-celery -A unicrawl beat -l info
+```powershell
+docker run -d -p 6379:6379 --name unicrawl-redis redis:7-alpine
 ```
+
+**Three terminals:**
+
+```powershell
+# Terminal 1 — Django application server
+pipenv run python manage.py runserver
+
+# Terminal 2 — Celery worker (processes crawl_source tasks)
+pipenv run celery -A unicrawl worker -l info
+
+# Terminal 3 — Celery beat (fires the scheduler tick every 30 s)
+pipenv run celery -A unicrawl beat -l info
+```
+
+With all three running, Beat automatically enqueues any source whose `next_crawl_at ≤ now` every 30 seconds. The worker picks them up and runs the full pipeline. Keyword-matched articles are pushed onto the `unicrawl.matched_articles` Redis Stream for the downstream LLM service.
 
 **Health check endpoint:** `GET /health/` returns `{"status": "ok"}` — used by Kubernetes liveness/readiness probes.
 
-**Source management API:** `GET / POST / PUT / DELETE /sources/` — DRF endpoints for administrator CRUD on the Source registry (FR-09). New sources default to `is_active=False`; activate them after a successful test-crawl.
+**Source management API:** `GET / POST / PUT / DELETE /sources/` — DRF endpoints for Source CRUD (FR-09). New sources default to `is_active=False`; activate them after a successful test-crawl.
 
 ---
 
