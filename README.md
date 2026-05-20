@@ -154,17 +154,21 @@ SHA-256 of the canonical URL → 64-character hex fingerprint. Two URLs that dif
 
 Normalizes extracted body text (collapse whitespace runs, strip, lowercase), then SHA-256-hashes. Catches syndicated reposts of identical articles appearing at different URLs.
 
-#### Layer 3 — Semantic Similarity (`dedup/semantic.py`) — *stub*
+#### Layer 3 — Semantic Similarity (`dedup/semantic.py`)
 
-Will use sentence-transformer embeddings compared against a pgvector ANN index. Suppresses near-duplicate articles whose cosine similarity is above a configurable threshold (default ≥ 0.85, set via `CRAWLER_SEMANTIC_DEDUP_THRESHOLD`). Not yet implemented.
+Uses a multilingual sentence-transformer model (`paraphrase-multilingual-MiniLM-L12-v2`, 384 dims) to produce an embedding for each article body, then computes cosine similarity against the most recent `CRAWLER_SEMANTIC_MAX_CANDIDATES` stored embeddings in Python. Suppresses articles whose cosine similarity exceeds `CRAWLER_SEMANTIC_DEDUP_THRESHOLD` (default ≥ 0.85).
+
+Enabled via `CRAWLER_SEMANTIC_DEDUP_ENABLED=True` (default `False` — sentence-transformers pulls in PyTorch, ~2 GB). Embeddings are stored in `RawArticle.embedding` as `JSONField(list[float])` for DB portability. **Production upgrade path:** once the PostgreSQL instance has the `pgvector` extension, replace the Python cosine loop with a `CosineDistance` ORM query and an `ivfflat`/`hnsw` index for ANN search.
 
 ---
 
-### 6. Keyword Filter (`crawler/filters/keyword.py`) — *stub*
+### 6. Keyword Filter (`crawler/filters/keyword.py`)
 
-Matches extracted body text against the active disease keyword list (FR-08). Returns the list of matched disease names, stored in `RawArticle.matched_diseases`. Only matched articles are forwarded downstream.
+Matches extracted body text against the active disease keyword list (FR-08). Returns a sorted list of matched canonical disease names, stored in `RawArticle.matched_diseases`. Only matched articles are forwarded downstream.
 
-Blocked by **TBD-02** (the disease list source is not yet finalized). While the stub raises `NotImplementedError`, the pipeline handles it gracefully — articles are persisted with `processing_status = pending` rather than crashing. Per-source overrides can be configured in `Source.keyword_filter_overrides`.
+The keyword list is managed via the `DiseaseKeyword` model (see [Data Models](#data-models)). Matching is case-insensitive substring search. Language-agnostic keywords (empty `language` field) match any article; language-specific keywords only match articles detected in that language.
+
+**Per-source overrides:** setting `Source.keyword_filter_overrides` to a JSON list of keyword strings bypasses the global `DiseaseKeyword` table entirely for that source — useful when a source covers a single disease not yet in the global list.
 
 ---
 
@@ -249,18 +253,21 @@ run_for_source(source_id)
       │       sha256(normalize(body)) → query RawArticle.content_hash
       │       Match → write suppressed record (suppression_reason=content) → skip
       │
-      ├─ 3c. DEDUP — Layer 3 (semantic similarity) [not yet implemented]
-      │       cosine(embed(body), stored embeddings) ≥ threshold
+      ├─ 3c. DEDUP — Layer 3 (semantic similarity) [CRAWLER_SEMANTIC_DEDUP_ENABLED=True]
+      │       embed(body) → 384-dim vector via sentence-transformer
+      │       cosine(query_vec, stored_vecs) ≥ CRAWLER_SEMANTIC_DEDUP_THRESHOLD
       │       Match → write suppressed record (suppression_reason=semantic) → skip
+      │       Disabled → skip (embedding remains null; model never loaded)
       │
       ├─ 3d. LANGUAGE DETECTION (FR-12)
       │       langdetect.detect(body) → BCP-47 tag
       │       Failure → fall back to source.language_hint or ""
       │       Non-English content is NOT dropped
       │
-      ├─ 3e. KEYWORD FILTER [stub — TBD-02]
+      ├─ 3e. KEYWORD FILTER
       │       matches_active_diseases(body, language) → list of disease names
-      │       NotImplementedError → save as pending, no crash
+      │       Queries DiseaseKeyword table (or source.keyword_filter_overrides)
+      │       No match → processing_status = pending
       │
       ├─ 3f. PERSIST RAW (FR-13)
       │       RawArticle.objects.create(url, body, fingerprints, language, ...)
@@ -323,10 +330,22 @@ RawArticle
 ├── is_duplicate        BooleanField
 ├── duplicate_of        FK → self (null)
 ├── suppression_reason  url | content | semantic
+├── embedding           JSONField (null) — 384-dim sentence-transformer vector
 ├── is_keyword_matched  BooleanField (db_index)
 ├── matched_diseases    JSONField (null)
 ├── processing_status   pending | matched | published | suppressed | failed
 └── created_at          DateTimeField (auto, db_index)
+```
+
+### DiseaseKeyword (`disease_keywords/models.py`)
+
+```
+DiseaseKeyword
+├── disease_name   CharField(255, db_index) — canonical name returned on match
+├── keyword        CharField(255)           — case-insensitive substring to match
+├── language       CharField(10, db_index)  — BCP-47; blank = language-agnostic
+└── is_active      BooleanField (db_index)
+    unique_together: (keyword, language)
 ```
 
 ---
@@ -366,7 +385,10 @@ All settings are environment-variable-driven via `django-environ`. Copy `.env.ex
 | `LLM_QUEUE_NAME` | `unicrawl.matched_articles` | Redis Stream key for LLM handoff |
 | `CRAWLER_DEFAULT_INTERVAL_SECONDS` | `3600` | Default per-source crawl interval |
 | `CRAWLER_RETRY_BACKOFF_MINUTES` | `1,4,16` | FR-14 retry intervals (comma-separated) |
+| `CRAWLER_SEMANTIC_DEDUP_ENABLED` | `False` | Enable Layer 3 semantic dedup (requires sentence-transformers + ~2 GB PyTorch) |
 | `CRAWLER_SEMANTIC_DEDUP_THRESHOLD` | `0.85` | FR-23 cosine similarity threshold |
+| `CRAWLER_SEMANTIC_MODEL` | `paraphrase-multilingual-MiniLM-L12-v2` | Sentence-transformer model name |
+| `CRAWLER_SEMANTIC_MAX_CANDIDATES` | `10000` | Max stored embeddings scanned per dedup check |
 | `EIOS_API_BASE_URL` | *(blank)* | WHO-EIOS base URL (FR-07) |
 | `EIOS_API_TOKEN` | *(blank)* | WHO-EIOS bearer token (FR-07) |
 
@@ -433,7 +455,7 @@ pipenv run pytest tests/test_pipeline.py -v
 pipenv run pytest --cov=crawler --cov=sources --cov=raw_content
 ```
 
-**Current suite: 96 tests, 0 failures.**
+**Current suite: 129 tests, 0 failures.**
 
 | Test file | What it covers |
 |---|---|
@@ -444,6 +466,8 @@ pipenv run pytest --cov=crawler --cov=sources --cov=raw_content
 | `test_pipeline.py` | Full fetch→extract→dedup→persist→publish chain, dedup suppression, stub tolerance |
 | `test_scheduler.py` | Back-off schedule (1/4/16 min), unavailability threshold, due-source filtering |
 | `test_publisher.py` | Redis XADD payload shape, JSON encoding, error propagation, connection reuse |
+| `test_keyword_filter.py` | DB keyword matching, case-insensitivity, language filtering, per-source overrides |
+| `test_semantic_dedup.py` | Cosine math, embedding computation, DB duplicate detection, pipeline integration |
 
 ---
 
@@ -451,16 +475,14 @@ pipenv run pytest --cov=crawler --cov=sources --cov=raw_content
 
 These items from SRS §7.3 are deliberately unresolved upstream and must be answered before the corresponding components can be finalized:
 
-| ID | Blocks | Question |
+| ID | Status | Question |
 |---|---|---|
-| **TBD-01** | Language support (FR-12) | Final regional language list beyond the initial South Asian set |
-| **TBD-02** | `crawler/filters/keyword.py` | Disease list source — DB table, YAML file, or external API? |
-| **TBD-03** | Publisher payload | Final extraction-field list for the LLM service |
-| **TBD-04** | Queue payload schema | LLM deployment option (in-house fine-tuned model vs. third-party API) |
+| **TBD-01** | Open | Final regional language list beyond the initial South Asian set (blocks FR-12 full coverage) |
+| **TBD-02** | **Resolved** | Disease list stored in `DiseaseKeyword` DB table, managed via Django admin / DRF API |
+| **TBD-03** | Open | Final extraction-field list for the LLM service (affects publisher payload schema) |
+| **TBD-04** | Open | LLM deployment option — in-house fine-tuned model vs. third-party API (affects queue payload) |
 
 **Stub components** (raise `NotImplementedError`; the pipeline handles each gracefully without crashing):
 
-- `crawler/filters/keyword.py` — `matches_active_diseases()` — blocked by TBD-02
-- `crawler/dedup/semantic.py` — `similarity_score()`, `is_duplicate()` — needs sentence-transformers + pgvector
 - `crawler/fetchers/eios.py` — `EIOSFetcher.fetch()` — needs EIOS API credentials (FR-07)
 - `crawler/fetchers/social.py` — `SocialFetcher.fetch()` — per-platform implementations pending
