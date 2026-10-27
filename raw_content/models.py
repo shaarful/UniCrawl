@@ -63,6 +63,12 @@ class RawArticle(models.Model):
         blank=True,
         help_text="BCP-47 language tag detected by langdetect (FR-12).",
     )
+    metadata = models.JSONField(
+        null=True,
+        blank=True,
+        help_text="Source-specific provenance (e.g. EIOS id, countries, categories) "
+                  "preserved for the LLM extraction service (FR-13, TBD-03).",
+    )
 
     # --- Dedup fingerprints (FR-11, FR-23) ---
     # Indexed for fast lookup; uniqueness is enforced by the dedup pipeline,

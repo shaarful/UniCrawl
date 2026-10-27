@@ -13,8 +13,9 @@ build/
 dist/
 
 # Environment
-# .env is committed for cross-machine dev continuity — DO NOT add real secrets here.
+# .env holds local secrets and is not committed; copy .env.example to start.
 # Production deployments must override SECRET_KEY and any token vars out-of-band.
+.env
 .env.local
 
 # Django
@@ -55,3 +56,6 @@ Thumbs.db
 
 # SRS extraction artifacts
 srs/_extracted/
+.env*
+!.env.example
+AGENTS.md

@@ -57,6 +57,24 @@ SOURCES = [
 ]
 
 
+def _eios_source() -> dict | None:
+    """The configured EIOS board as a source, or None if EIOS is not configured."""
+    from django.conf import settings
+
+    from crawler.fetchers.eios import board_url
+
+    if not (settings.EIOS_BOARD_ID and settings.EIOS_API_BASE_URL and settings.EIOS_CLIENT_ID):
+        return None
+    return {
+        "name":          f"WHO-EIOS board {settings.EIOS_BOARD_ID}",
+        "url":           board_url(settings.EIOS_API_BASE_URL, settings.EIOS_API_VERSION,
+                                   settings.EIOS_BOARD_ID),
+        "content_type":  Source.ContentType.EIOS,
+        "language_hint": "",
+        "notes":         "WHO-EIOS board articles via the service-to-service API (FR-07).",
+    }
+
+
 class Command(BaseCommand):
     help = "Seed disease keywords and test sources for local development."
 
@@ -101,9 +119,10 @@ class Command(BaseCommand):
         User = get_user_model()
         admin = User.objects.filter(is_superuser=True).first()
 
+        sources = [*SOURCES, *filter(None, [_eios_source()])]
         src_created = 0
         source_ids = []
-        for s in SOURCES:
+        for s in sources:
             obj, created = Source.objects.get_or_create(
                 url=s["url"],
                 defaults={
@@ -122,7 +141,7 @@ class Command(BaseCommand):
             self.stdout.write(f"  [{status}] {obj.name}")
 
         self.stdout.write(self.style.SUCCESS(
-            f"Sources: {src_created} created, {len(SOURCES) - src_created} already existed."
+            f"Sources: {src_created} created, {len(sources) - src_created} already existed."
         ))
 
         # --- optional crawl ---

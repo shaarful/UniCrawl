@@ -111,7 +111,15 @@ CRAWLER_SEMANTIC_MAX_CANDIDATES = env("CRAWLER_SEMANTIC_MAX_CANDIDATES")
 LLM_QUEUE_NAME = env("LLM_QUEUE_NAME", default="unicrawl.matched_articles")
 
 EIOS_API_BASE_URL = env("EIOS_API_BASE_URL", default="")
-EIOS_API_TOKEN = env("EIOS_API_TOKEN", default="")
+EIOS_API_VERSION = env("EIOS_API_VERSION", default="1.0")
+EIOS_TOKEN_URL = env("EIOS_TOKEN_URL", default="")
+EIOS_CLIENT_ID = env("EIOS_CLIENT_ID", default="")
+EIOS_CLIENT_SECRET = env("EIOS_CLIENT_SECRET", default="")
+EIOS_SCOPE = env("EIOS_SCOPE", default="")
+EIOS_BOARD_ID = env("EIOS_BOARD_ID", default="")
+EIOS_BACKFILL_HOURS = env.int("EIOS_BACKFILL_HOURS", default=24)
+EIOS_WINDOW_MINUTES = env.int("EIOS_WINDOW_MINUTES", default=60)
+EIOS_PAGE_SIZE = env.int("EIOS_PAGE_SIZE", default=100)
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},

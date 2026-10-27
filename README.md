@@ -108,7 +108,7 @@ Each fetcher implements the `Fetcher` protocol: `fetch(url) → FetchResult`.
 |---|---|---|
 | `fetchers/html.py` | `HTMLFetcher` | News portals, government bulletins |
 | `fetchers/rss.py` | `RSSFetcher` | RSS / Atom feeds |
-| `fetchers/eios.py` | `EIOSFetcher` | WHO-EIOS authenticated feed (FR-07) — *stub* |
+| `fetchers/eios.py` | `EIOSFetcher` | WHO-EIOS authenticated feed (FR-07) — OAuth2 client credentials, time-windowed board paging |
 | `fetchers/social.py` | `SocialFetcher` | Social-media APIs — *stub* |
 
 `HTMLFetcher` and `RSSFetcher` share `HttpFetcher` (`fetchers/base.py`), which uses **httpx** with:
@@ -118,6 +118,19 @@ Each fetcher implements the `Fetcher` protocol: `fetch(url) → FetchResult`.
 - Non-2xx responses returned as-is — the pipeline inspects `status_code` and raises for 4xx/5xx
 
 Network errors (`httpx.HTTPError`) propagate to the Celery task, which calls `record_failure()`.
+
+#### WHO-EIOS (`fetchers/eios.py`)
+
+An EIOS source's `url` is a board's articles endpoint, e.g.
+`https://eios.who.int/portal/api/api/v1.0/Items/matching-board/<boardId>`
+(`seed_dev` creates one from `EIOS_BOARD_ID`).
+
+- **Auth:** OAuth2 client-credentials token from Azure AD (`EIOS_TOKEN_URL`, `EIOS_CLIENT_ID`, `EIOS_CLIENT_SECRET`, `EIOS_SCOPE`); cached ~1h, refreshed on expiry or 401.
+- **Paging:** the API is offset-paged and refuses offsets past 10,000, so the range is read in `EIOS_WINDOW_MINUTES` windows, halving any window that reports ≥ 10,000 articles.
+- **Range:** first run reads the last `EIOS_BACKFILL_HOURS`; later runs resume from `last_crawled_at` minus a 15-minute overlap. Articles already stored for the source are skipped.
+- **Full text:** the list endpoint returns only a snippet. Every article is stored with its snippet; for keyword-matched ones the body is replaced by EIOS `fullText` (only returned to accounts with full-text access) or else the original `link` fetched with `HTMLFetcher`. GPHIN (subscription) and social-media links are not fetched. `metadata.body_source` records which was used (`eios_fulltext` / `original_link` / `eios_snippet`).
+- **Metadata:** EIOS id, countries, locations, categories, source and translations are kept in `RawArticle.metadata`; English translations also feed the keyword filter (FR-12).
+- Articles are streamed page by page, so matches are published while the board is still being read.
 
 ---
 
@@ -325,6 +338,7 @@ RawArticle
 ├── title               CharField(1024)
 ├── body                TextField
 ├── language            CharField(10)  — BCP-47
+├── metadata            JSONField (null) — source-specific provenance (e.g. EIOS)
 ├── url_fingerprint     CharField(64, db_index)
 ├── content_hash        CharField(64, db_index)
 ├── is_duplicate        BooleanField
@@ -389,8 +403,16 @@ All settings are environment-variable-driven via `django-environ`. Copy `.env.ex
 | `CRAWLER_SEMANTIC_DEDUP_THRESHOLD` | `0.85` | FR-23 cosine similarity threshold |
 | `CRAWLER_SEMANTIC_MODEL` | `paraphrase-multilingual-MiniLM-L12-v2` | Sentence-transformer model name |
 | `CRAWLER_SEMANTIC_MAX_CANDIDATES` | `10000` | Max stored embeddings scanned per dedup check |
-| `EIOS_API_BASE_URL` | *(blank)* | WHO-EIOS base URL (FR-07) |
-| `EIOS_API_TOKEN` | *(blank)* | WHO-EIOS bearer token (FR-07) |
+| `EIOS_API_BASE_URL` | *(blank)* | WHO-EIOS API base URL (FR-07), e.g. `https://eios.who.int/portal/api` |
+| `EIOS_API_VERSION` | `1.0` | EIOS API version path segment |
+| `EIOS_TOKEN_URL` | *(blank)* | Azure AD OAuth2 token endpoint for the client-credentials flow |
+| `EIOS_CLIENT_ID` | *(blank)* | EIOS consumer client ID |
+| `EIOS_CLIENT_SECRET` | *(blank)* | EIOS consumer client secret |
+| `EIOS_SCOPE` | *(blank)* | EIOS client-ID scope (`EIOS_CLIENT_ID_SCOPE` in the EIOS docs) |
+| `EIOS_BOARD_ID` | *(blank)* | Board whose articles are pulled |
+| `EIOS_BACKFILL_HOURS` | `24` | First-run look-back; later runs resume from the last crawl |
+| `EIOS_WINDOW_MINUTES` | `60` | Time-window size for paging the board (each window must hold < 10,000 articles; split automatically) |
+| `EIOS_PAGE_SIZE` | `100` | Articles per page (API max 100) |
 
 ---
 
@@ -418,10 +440,11 @@ pipenv install --dev
 
 ### 2. Configure environment
 
-The `.env` file is already present with SQLite as the DB fallback and sensible defaults. No changes are needed to start:
+`.env` is not committed (it holds local secrets). Create it from the template, which uses SQLite as the DB fallback and sensible defaults:
 
 ```powershell
-# (Optional) Review or adjust settings
+Copy-Item .env.example .env
+# Fill in EIOS_CLIENT_ID / EIOS_CLIENT_SECRET / EIOS_SCOPE to enable the EIOS feed
 notepad .env
 ```
 
@@ -538,7 +561,7 @@ pipenv run pytest tests/test_pipeline.py -v
 pipenv run pytest --cov=crawler --cov=sources --cov=raw_content
 ```
 
-**Current suite: 129 tests, 0 failures.**
+**Current suite: 146 tests, 0 failures.**
 
 | Test file | What it covers |
 |---|---|
@@ -550,6 +573,7 @@ pipenv run pytest --cov=crawler --cov=sources --cov=raw_content
 | `test_scheduler.py` | Back-off schedule (1/4/16 min), unavailability threshold, due-source filtering |
 | `test_publisher.py` | Redis XADD payload shape, JSON encoding, error propagation, connection reuse |
 | `test_keyword_filter.py` | DB keyword matching, case-insensitivity, language filtering, per-source overrides |
+| `test_eios.py` | EIOS token caching/refresh, windowed paging + split at 10k, full-text fallback chain, re-poll skipping |
 | `test_semantic_dedup.py` | Cosine math, embedding computation, DB duplicate detection, pipeline integration |
 
 ---
@@ -567,5 +591,4 @@ These items from SRS §7.3 are deliberately unresolved upstream and must be answ
 
 **Stub components** (raise `NotImplementedError`; the pipeline handles each gracefully without crashing):
 
-- `crawler/fetchers/eios.py` — `EIOSFetcher.fetch()` — needs EIOS API credentials (FR-07)
 - `crawler/fetchers/social.py` — `SocialFetcher.fetch()` — per-platform implementations pending
