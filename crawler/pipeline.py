@@ -304,9 +304,17 @@ def _eios_candidates(
     items = fetcher.iter_board_items(source.url, since=since, until=until, on_window=on_window)
 
     def complete(article: _Article, page: Future | None = None) -> _Article:
+        # Both versions are kept: EIOS's own text in metadata["eios"] and our
+        # crawled page text in metadata["crawled_text"]. `body` is the best of
+        # them: EIOS fullText, else the crawled text if longer than the snippet.
         if page is not None:
             body, reason = page.result()
-            if len(body) > len(article.body):
+            if body:
+                article.metadata["crawled_text"] = body
+            if article.metadata["body_source"] == "eios_fulltext":
+                if reason:
+                    article.metadata["link_error"] = reason
+            elif len(body) > len(article.body):
                 article.body = body
                 article.metadata["body_source"] = "original_link"
             else:
@@ -337,8 +345,7 @@ def _eios_candidates(
                 article.body = full
                 article.metadata["eios"]["fullText"] = full
                 article.metadata["body_source"] = "eios_fulltext"
-                yield complete(article)
-            elif _eios_link_fetchable(item):
+            if _eios_link_fetchable(item):
                 pending[pool.submit(_fetch_original_body, link)] = article
             else:
                 article.metadata["link_error"] = "not publicly accessible (GPHIN / social media)"

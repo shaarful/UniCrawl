@@ -129,7 +129,10 @@ An EIOS source's `url` is a board's articles endpoint, e.g.
 - **Paging:** the API is offset-paged and refuses offsets past 10,000, so the range is read in `EIOS_WINDOW_MINUTES` windows, halving any window that reports ≥ 10,000 articles.
 - **Range:** first run reads the last `EIOS_BACKFILL_HOURS`; later runs resume from `last_crawled_at` minus a 15-minute overlap. Articles already stored for the source are skipped.
 - **Full text:** the list endpoint returns only a snippet, and EIOS returns `fullText` only to accounts with full-text access, which this service account does not have. So for **every** article the crawler fetches the original `link` (`EIOS_LINK_FETCH_WORKERS` pages in parallel) and extracts the article text.
-  - **Which body is kept:** the page text, if it is longer than the snippet. Otherwise the EIOS snippet.
+  - **Both versions are kept:**
+    - **`metadata.eios`:** EIOS's own text — title, description, summary, translations, and `fullText` if returned.
+    - **`metadata.crawled_text`:** our crawled page text, whenever the page yielded any. This is stored even if it is not used as the body, and is still fetched when EIOS supplies `fullText`.
+  - **Which version becomes `body`:** EIOS `fullText` if returned. Otherwise the crawled text, if it is longer than the snippet. Otherwise the EIOS snippet.
   - **Keyword matching:** runs on that full body plus the English translation. A disease mentioned only deep in an article is still caught.
   - **Retries:** timeouts and HTTP 429/5xx get one retry. Sites that refuse the crawler (403) are not worked around (SRS §2.5).
   - **Not fetched:** GPHIN (subscription) and social-media links.
@@ -137,7 +140,7 @@ An EIOS source's `url` is a board's articles endpoint, e.g.
   - **Live sample:** about 75–80% of articles get the full body, typically about 3,000 characters.
 - **Metadata:** the complete EIOS record is kept, unchanged, in `RawArticle.metadata["eios"]`, about 3 KB per article.
   - **Fields:** `id`, `eiosUrl`, `title`, `translatedTitle`, `description`, `translatedDescription`, `abstractiveSummary`, `link`, `pubDate`, `processedOnDate`, `language`/`languageIso`, `source`, `categories`, `countries`, `locations`, duplicate flags, `recommenderPrediction`, `highlights`, plus `fullText` when EIOS returns it.
-  - **Snippet stays available:** the EIOS title, description and summary are kept even when the body is the original page's text.
+  - **Snippet stays available:** the EIOS title, description and summary are kept even when the body is the crawled page text.
   - **Translations:** the English translations also feed the keyword filter (FR-12).
 - **Streaming:** articles are released as their pages arrive, so matches are published while the board is still being read. One slow site doesn't hold up the others.
 

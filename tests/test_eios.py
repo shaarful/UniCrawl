@@ -230,6 +230,7 @@ def test_eios_pipeline_fetches_full_text_for_every_item():
         assert article.body.startswith("Original page text of " + article.url)
         assert article.metadata["body_source"] == "original_link"
         assert "link_error" not in article.metadata
+        assert article.metadata["crawled_text"] == article.body
     assert matched.metadata["eios"]["id"] == "a"
     assert matched.metadata["eios"]["countries"] == [{"key": "KE", "label": "Kenya"}]
     assert fetch_link.call_count == 2
@@ -272,16 +273,18 @@ def test_eios_pipeline_matches_disease_mentioned_only_in_full_text():
 
 
 @pytest.mark.django_db
-def test_eios_pipeline_prefers_eios_fulltext():
+def test_eios_pipeline_prefers_eios_fulltext_but_keeps_crawled_text():
     source = _eios_source()
-    fetcher = _fake_fetcher([_item("a", "Ebola update")], detail={"id": "a", "fullText": "EIOS full Ebola text."})
+    detail = {"id": "a", "fullText": "EIOS full Ebola text."}
 
-    fetch_link = _run(source, fetcher)
+    fetch_link = _run(source, _fake_fetcher([_item("a", "Ebola update")], detail=detail))
 
     article = RawArticle.objects.get()
     assert article.body == "EIOS full Ebola text."
     assert article.metadata["body_source"] == "eios_fulltext"
-    fetch_link.assert_not_called()
+    assert article.metadata["eios"]["fullText"] == "EIOS full Ebola text."
+    assert article.metadata["crawled_text"].startswith("Original page text of")
+    fetch_link.assert_called_once_with("https://news.example.com/a")
 
 
 @pytest.mark.django_db
@@ -323,6 +326,7 @@ def test_eios_pipeline_keeps_snippet_when_link_body_is_shorter():
     assert article.body.startswith("A long Ebola snippet")
     assert article.metadata["body_source"] == "eios_snippet"
     assert article.metadata["link_error"] == "page text shorter than snippet"
+    assert article.metadata["crawled_text"] == "Subscribe"  # kept, though not used as body
 
 
 @pytest.mark.django_db
