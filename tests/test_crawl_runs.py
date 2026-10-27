@@ -181,6 +181,49 @@ def test_second_run_for_same_source_is_refused():
 
 
 @pytest.mark.django_db
+def test_already_stored_stretch_still_honours_stop():
+    run = create_run(_source().pk)
+    CrawlRun.objects.filter(pk=run.pk).update(cancel_requested=True)
+    with pytest.raises(P.CrawlCancelled):
+        P.RunProgress(run).skip()
+
+
+@pytest.mark.django_db
+def test_heartbeat_thread_beats_until_stopped():
+    import time
+
+    run = create_run(_source().pk)
+    progress = P.RunProgress(run)
+    progress.HEARTBEAT_SECONDS = 0.01
+    with patch.object(progress, "beat") as beat:
+        progress.start_heartbeat()
+        time.sleep(0.2)
+        progress.stop_heartbeat()
+        progress._heartbeat.join(timeout=1)
+    assert beat.call_count >= 2
+    assert not progress._heartbeat.is_alive()
+
+
+@pytest.mark.django_db
+def test_beat_refreshes_heartbeat():
+    run = create_run(_source().pk)
+    old = timezone.now() - timedelta(minutes=5)
+    CrawlRun.objects.filter(pk=run.pk).update(heartbeat_at=old)
+    P.RunProgress(run).beat()
+    run.refresh_from_db()
+    assert run.heartbeat_at > old
+
+
+@pytest.mark.django_db
+def test_stop_on_a_run_whose_process_died_marks_it_interrupted(admin_client):
+    run = create_run(_source().pk)
+    CrawlRun.objects.filter(pk=run.pk).update(heartbeat_at=timezone.now() - timedelta(minutes=2))
+    admin_client.post(reverse("crawler:run-stop", args=[run.pk]), HTTP_ACCEPT="application/json")
+    run.refresh_from_db()
+    assert run.status == CrawlRun.Status.INTERRUPTED
+
+
+@pytest.mark.django_db
 def test_stale_running_runs_are_marked_interrupted():
     source = _source()
     run = create_run(source.pk)

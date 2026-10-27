@@ -19,9 +19,10 @@ from crawler.progress import CrawlCancelled, RunProgress
 
 log = structlog.get_logger(__name__)
 
-# A running run that has not reported for this long lost its process
-# (e.g. runserver restarted mid-crawl).
-STALE_AFTER = timedelta(minutes=10)
+# Live runs touch heartbeat_at every RunProgress.HEARTBEAT_SECONDS (10 s), so a
+# running run silent for this long lost its process (e.g. runserver reloaded
+# after a code change, or the server was stopped mid-crawl).
+STALE_AFTER = timedelta(seconds=60)
 
 
 class AlreadyRunning(Exception):
@@ -36,7 +37,7 @@ def mark_stale_runs() -> int:
         heartbeat_at__lt=timezone.now() - STALE_AFTER,
     ).update(
         status=CrawlRun.Status.INTERRUPTED,
-        stage="Interrupted — the crawl process stopped reporting",
+        stage="Interrupted — the crawl process stopped (server restarted or reloaded?)",
         finished_at=timezone.now(),
     )
 
@@ -68,9 +69,12 @@ def start_run(source_id: int, *, user=None) -> CrawlRun:
 
 
 def request_stop(run: CrawlRun) -> None:
+    """Ask the crawl to stop. A run whose process is already gone has nobody
+    to obey the request, so it is marked interrupted right away."""
     CrawlRun.objects.filter(pk=run.pk, status=CrawlRun.Status.RUNNING).update(
         cancel_requested=True,
     )
+    mark_stale_runs()
 
 
 def execute_run(run_id: int) -> None:
@@ -84,6 +88,7 @@ def execute_run(run_id: int) -> None:
     run = CrawlRun.objects.select_related("source").get(pk=run_id)
     progress = RunProgress(run)
     log.info("run.start", run_id=run_id, source=run.source.name, trigger=run.trigger)
+    progress.start_heartbeat()
     try:
         run_for_source(run.source_id, progress=progress)
     except CrawlCancelled:
@@ -97,6 +102,8 @@ def execute_run(run_id: int) -> None:
     else:
         progress.finish(CrawlRun.Status.SUCCEEDED, stage="Done")
         log.info("run.done", run_id=run_id, processed=run.processed, matched=run.matched)
+    finally:
+        progress.stop_heartbeat()
 
 
 def _run_in_thread(run_id: int) -> None:

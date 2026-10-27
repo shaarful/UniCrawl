@@ -4,12 +4,21 @@ The pipeline calls a progress object at each step; `NullProgress` ignores it
 (tests, shell runs), `RunProgress` keeps counters in memory and writes them to
 the CrawlRun at most once per FLUSH_SECONDS. Each write also checks whether a
 stop was requested and raises CrawlCancelled if so.
+
+A separate heartbeat thread touches `heartbeat_at` every HEARTBEAT_SECONDS
+while the run is alive, even when the pipeline is blocked on a slow site. If
+the process dies (e.g. runserver reloading), the heartbeat stops and the run
+is marked interrupted shortly after (see runs.STALE_AFTER).
 """
 from __future__ import annotations
 
+import threading
 import time
 
+import structlog
 from django.utils import timezone
+
+log = structlog.get_logger(__name__)
 
 # Outcomes returned by pipeline._process_article, plus "error".
 SUPPRESSED = "suppressed"
@@ -55,12 +64,43 @@ class NullProgress:
 
 class RunProgress(NullProgress):
     FLUSH_SECONDS = 1.0
+    HEARTBEAT_SECONDS = 10.0
 
     def __init__(self, run) -> None:
         self.run = run
         # (start %, end %, expected articles, processed count at segment start)
         self._segment: tuple[float, float, int, int] | None = None
         self._last_flush = 0.0
+        self._heartbeat_stop = threading.Event()
+        self._heartbeat: threading.Thread | None = None
+
+    # --- Heartbeat ------------------------------------------------------------
+
+    def start_heartbeat(self) -> None:
+        self._heartbeat = threading.Thread(
+            target=self._heartbeat_loop, name=f"crawl-run-{self.run.pk}-heartbeat", daemon=True,
+        )
+        self._heartbeat.start()
+
+    def stop_heartbeat(self) -> None:
+        self._heartbeat_stop.set()
+
+    def beat(self) -> None:
+        from crawler.models import CrawlRun
+
+        CrawlRun.objects.filter(pk=self.run.pk).update(heartbeat_at=timezone.now())
+
+    def _heartbeat_loop(self) -> None:
+        from django.db import connection
+
+        try:
+            while not self._heartbeat_stop.wait(self.HEARTBEAT_SECONDS):
+                try:
+                    self.beat()
+                except Exception as exc:  # a missed beat must never kill the loop
+                    log.warning("run.heartbeat_failed", run_id=self.run.pk, error=str(exc))
+        finally:
+            connection.close()
 
     # --- Pipeline hooks -------------------------------------------------------
 
@@ -103,6 +143,7 @@ class RunProgress(NullProgress):
     def skip(self, count: int = 1) -> None:
         """Items the source had already stored — not reprocessed."""
         self.run.skipped += count
+        self.flush()  # long already-stored stretches still report and honour Stop
 
     def full_text(self) -> None:
         """An article got its full body (original page or EIOS fullText)."""
@@ -136,6 +177,7 @@ class RunProgress(NullProgress):
     def finish(self, status: str, *, stage: str, error: str = "") -> None:
         from crawler.models import CrawlRun
 
+        self.stop_heartbeat()
         run = self.run
         run.status = status
         run.stage = stage
