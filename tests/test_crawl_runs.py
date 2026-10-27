@@ -43,7 +43,8 @@ def _patched_pipeline(fetcher):
     return (
         patch("crawler.pipeline._fetcher_for", return_value=fetcher),
         patch("crawler.publisher.publish_matched"),
-        patch("crawler.pipeline._fetch_original_body", return_value="Full Ebola text. " * 20),
+        patch("crawler.pipeline._fetch_original_body",
+              side_effect=lambda link: (f"Original page text of {link}. " * 20, "")),
     )
 
 
@@ -95,9 +96,18 @@ def test_execute_run_records_counts_and_success():
     assert run.status == CrawlRun.Status.SUCCEEDED
     assert run.finished_at is not None
     assert run.percent == 100
-    assert (run.processed, run.new, run.matched, run.published) == (2, 2, 1, 1)
+    assert (run.processed, run.new, run.matched, run.published, run.full_text) == (2, 2, 1, 1, 2)
     assert run.fetched_at is not None
     assert any("EIOS" in e["msg"] for e in run.events)
+
+
+@pytest.mark.django_db
+def test_rerun_counts_already_stored_items_as_skipped():
+    source = _source()
+    _execute(create_run(source.pk), _fetcher([_item("a", "Ebola outbreak")]))
+    run = _execute(create_run(source.pk), _fetcher([_item("a", "Ebola outbreak"), _item("b", "x")]))
+
+    assert (run.processed, run.new, run.skipped, run.duplicates) == (1, 1, 1, 0)
 
 
 @pytest.mark.django_db
@@ -108,7 +118,8 @@ def test_queue_failure_counts_as_matched_not_error():
     fetcher = _fetcher([_item("a", "Ebola outbreak"), _item("b", "Ebola again")])
     with (
         patch("crawler.pipeline._fetcher_for", return_value=fetcher),
-        patch("crawler.pipeline._fetch_original_body", side_effect=lambda u: f"Ebola {u} " * 20),
+        patch("crawler.pipeline._fetch_original_body",
+              side_effect=lambda u: (f"Ebola {u} " * 20, "")),
         patch("crawler.publisher.publish_matched", side_effect=ConnectionError("refused")),
     ):
         execute_run(run.pk)

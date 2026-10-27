@@ -43,6 +43,12 @@ class NullProgress:
     def article(self, outcome: str) -> None:
         pass
 
+    def skip(self, count: int = 1) -> None:
+        pass
+
+    def full_text(self) -> None:
+        pass
+
     def event(self, level: str, message: str) -> None:
         pass
 
@@ -94,6 +100,14 @@ class RunProgress(NullProgress):
             run.percent = start + (end - start) * done
         self.flush()
 
+    def skip(self, count: int = 1) -> None:
+        """Items the source had already stored — not reprocessed."""
+        self.run.skipped += count
+
+    def full_text(self) -> None:
+        """An article got its full body (original page or EIOS fullText)."""
+        self.run.full_text += 1
+
     def event(self, level: str, message: str) -> None:
         events = self.run.events = list(self.run.events or [])
         events.append({"t": timezone.now().isoformat(), "level": level, "msg": message[:500]})
@@ -113,7 +127,8 @@ class RunProgress(NullProgress):
             stage=run.stage, percent=run.percent, fetched_at=run.fetched_at,
             processed=run.processed, new=run.new, matched=run.matched,
             published=run.published, duplicates=run.duplicates, errors=run.errors,
-            events=run.events, heartbeat_at=timezone.now(),
+            skipped=run.skipped, full_text=run.full_text, events=run.events,
+            heartbeat_at=timezone.now(),
         )
         if CrawlRun.objects.filter(pk=run.pk, cancel_requested=True).exists():
             raise CrawlCancelled

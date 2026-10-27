@@ -198,16 +198,21 @@ def _fake_fetcher(items, detail=None):
     return fetcher
 
 
-def _run(source, fetcher, original_body="Full article text about the Ebola outbreak. " * 20):
+def _page_text(link):
+    return f"Original page text of {link}. " * 20, ""
+
+
+def _run(source, fetcher, page=_page_text):
+    """Run the pipeline; `page(link)` returns (body, failure reason) for original pages."""
     with patch("crawler.pipeline._fetcher_for", return_value=fetcher), \
          patch("crawler.publisher.publish_matched"), \
-         patch("crawler.pipeline._fetch_original_body", return_value=original_body) as fetch_link:
+         patch("crawler.pipeline._fetch_original_body", side_effect=page) as fetch_link:
         run_for_source(source.id)
     return fetch_link
 
 
 @pytest.mark.django_db
-def test_eios_pipeline_stores_every_item_and_enriches_only_matches():
+def test_eios_pipeline_fetches_full_text_for_every_item():
     source = _eios_source()
     fetcher = _fake_fetcher([
         _item("a", "Ebola claims second life in Kenya", description="Kenya Ebola snippet."),
@@ -220,15 +225,50 @@ def test_eios_pipeline_stores_every_item_and_enriches_only_matches():
     matched = RawArticle.objects.get(url="https://news.example.com/a")
     other = RawArticle.objects.get(url="https://news.example.com/b")
     assert matched.is_keyword_matched
-    assert matched.body.startswith("Full article text")
-    assert matched.metadata["body_source"] == "original_link"
+    assert not other.is_keyword_matched
+    for article in (matched, other):
+        assert article.body.startswith("Original page text of " + article.url)
+        assert article.metadata["body_source"] == "original_link"
+        assert "link_error" not in article.metadata
     assert matched.metadata["eios"]["id"] == "a"
     assert matched.metadata["eios"]["countries"] == [{"key": "KE", "label": "Kenya"}]
-    assert not other.is_keyword_matched
-    assert other.body == "Sports snippet."
-    assert other.metadata["body_source"] == "eios_snippet"
-    fetch_link.assert_called_once_with("https://news.example.com/a")
+    assert fetch_link.call_count == 2
     fetcher.close.assert_called_once()
+
+
+@pytest.mark.django_db
+def test_eios_pipeline_keeps_the_complete_eios_record():
+    source = _eios_source()
+    item = _item(
+        "a", "Ebola en Kenia", description="Resumen original.", translatedTitle="Ebola in Kenya",
+        abstractiveSummary="Summary.", isDuplicate=False, numDescendantDuplicates=0,
+        recommenderPrediction={"default": {"score": 0.91}}, highlights={},
+        language={"key": "es", "label": "Spanish"},
+    )
+    _run(source, _fake_fetcher([item]))
+
+    article = RawArticle.objects.get()
+    assert article.metadata["body_source"] == "original_link"
+    assert article.metadata["eios"] == item  # every field, even though the body was replaced
+
+
+@pytest.mark.django_db
+def test_eios_fulltext_is_kept_in_the_eios_record():
+    source = _eios_source()
+    detail = {"id": "a", "fullText": "Full."}
+    _run(source, _fake_fetcher([_item("a", "Ebola update")], detail=detail))
+
+    assert RawArticle.objects.get().metadata["eios"]["fullText"] == "Full."
+
+
+@pytest.mark.django_db
+def test_eios_pipeline_matches_disease_mentioned_only_in_full_text():
+    source = _eios_source()
+    fetcher = _fake_fetcher([_item("a", "Ministry weekly update", description="Weekly update.")])
+
+    _run(source, fetcher, page=lambda link: ("Officials confirmed three Ebola cases. " * 10, ""))
+
+    assert RawArticle.objects.get().is_keyword_matched
 
 
 @pytest.mark.django_db
@@ -267,6 +307,8 @@ def test_eios_pipeline_does_not_fetch_social_or_gphin_links():
 
     fetch_link.assert_not_called()
     assert {a.metadata["body_source"] for a in RawArticle.objects.all()} == {"eios_snippet"}
+    assert all("not publicly accessible" in a.metadata["link_error"]
+               for a in RawArticle.objects.all())
     assert RawArticle.objects.filter(is_keyword_matched=True).count() == 2
 
 
@@ -275,11 +317,12 @@ def test_eios_pipeline_keeps_snippet_when_link_body_is_shorter():
     source = _eios_source()
     fetcher = _fake_fetcher([_item("a", "Ebola", description="A long Ebola snippet " * 10)])
 
-    _run(source, fetcher, original_body="Subscribe")
+    _run(source, fetcher, page=lambda link: ("Subscribe", ""))
 
     article = RawArticle.objects.get()
     assert article.body.startswith("A long Ebola snippet")
     assert article.metadata["body_source"] == "eios_snippet"
+    assert article.metadata["link_error"] == "page text shorter than snippet"
 
 
 @pytest.mark.django_db
@@ -289,9 +332,11 @@ def test_eios_pipeline_matches_on_english_translation():
         "hi", "डेंगू", description="हिंदी पाठ", translatedTitle="Ebola cases rise",
     )])
 
-    _run(source, fetcher)
+    _run(source, fetcher, page=lambda link: ("", "HTTP 403"))
 
-    assert RawArticle.objects.get().is_keyword_matched
+    article = RawArticle.objects.get()
+    assert article.is_keyword_matched
+    assert article.metadata["link_error"] == "HTTP 403"
 
 
 @pytest.mark.django_db
@@ -319,3 +364,58 @@ def test_eios_window_uses_backfill_then_last_crawl(settings):
     _run(source, fetcher)
     second = fetcher.iter_board_items.call_args.kwargs
     assert second["since"] == source.last_crawled_at - timedelta(minutes=15)
+
+
+# ---------------------------------------------------------------------------
+# Original page fetch
+# ---------------------------------------------------------------------------
+
+_ARTICLE_HTML = (
+    b"<html><head><title>Outbreak</title></head><body><article><h1>Outbreak</h1>"
+    + b"<p>Health officials confirmed new cases in the district today.</p>" * 20
+    + b"</article></body></html>"
+)
+
+
+def _page(status=200, body=_ARTICLE_HTML, content_type="text/html"):
+    from crawler.fetchers.base import FetchResult
+
+    return FetchResult(url="https://news.example.com/a", status_code=status, body=body,
+                       headers={"content-type": content_type},
+                       final_url="https://news.example.com/a")
+
+
+def _fetch_page(*outcomes):
+    from crawler.pipeline import _fetch_original_body
+
+    with patch("crawler.fetchers.html.HTMLFetcher.fetch", side_effect=outcomes) as fetch, \
+         patch("crawler.pipeline._LINK_RETRY_DELAY_SECONDS", 0):
+        result = _fetch_original_body("https://news.example.com/a")
+    return result, fetch.call_count
+
+
+def test_original_page_text_is_extracted():
+    (body, reason), calls = _fetch_page(_page())
+    assert "Health officials confirmed" in body
+    assert (reason, calls) == ("", 1)
+
+
+def test_original_page_timeout_is_retried_once():
+    (body, reason), calls = _fetch_page(httpx.ReadTimeout("slow"), _page())
+    assert body and reason == "" and calls == 2
+
+    (body, reason), calls = _fetch_page(httpx.ReadTimeout("slow"), httpx.ReadTimeout("slow"))
+    assert (body, reason, calls) == ("", "timeout", 2)
+
+
+def test_original_page_server_error_is_retried_but_403_is_not():
+    (body, reason), calls = _fetch_page(_page(status=503), _page())
+    assert body and calls == 2
+
+    (body, reason), calls = _fetch_page(_page(status=403))
+    assert (body, reason, calls) == ("", "HTTP 403", 1)
+
+
+def test_original_page_pdf_is_reported_not_extracted():
+    (body, reason), _ = _fetch_page(_page(body=b"%PDF-1.7", content_type="application/pdf"))
+    assert (body, reason) == ("", "PDF (not extracted)")

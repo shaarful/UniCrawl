@@ -126,6 +126,36 @@ def test_publish_matched_encodes_null_matched_diseases_as_empty_list():
 
 
 @pytest.mark.django_db
+def test_publish_matched_encodes_metadata_as_json():
+    source = _source()
+    article = _article(source)
+    metadata = {
+        "eios": {"id": "x1", "title": "Dengue à Dakar", "countries": [{"key": "SN"}]},
+        "body_source": "original_link",
+    }
+    RawArticle.objects.filter(pk=article.pk).update(metadata=metadata)
+    mock_client = _mock_client()
+
+    with patch("crawler.publisher._get_client", return_value=mock_client):
+        publish_matched(article.id)
+
+    fields = mock_client.xadd.call_args.args[1]
+    assert json.loads(fields["metadata"]) == metadata
+    assert "à" in fields["metadata"]  # non-ASCII kept readable
+
+
+@pytest.mark.django_db
+def test_publish_matched_encodes_missing_metadata_as_empty_object():
+    article = _article(_source())
+    mock_client = _mock_client()
+
+    with patch("crawler.publisher._get_client", return_value=mock_client):
+        publish_matched(article.id)
+
+    assert json.loads(mock_client.xadd.call_args.args[1]["metadata"]) == {}
+
+
+@pytest.mark.django_db
 def test_publish_matched_language_falls_back_to_empty_string():
     source = _source()
     body = "test body text"

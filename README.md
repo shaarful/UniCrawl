@@ -128,9 +128,18 @@ An EIOS source's `url` is a board's articles endpoint, e.g.
 - **Auth:** OAuth2 client-credentials token from Azure AD (`EIOS_TOKEN_URL`, `EIOS_CLIENT_ID`, `EIOS_CLIENT_SECRET`, `EIOS_SCOPE`); cached ~1h, refreshed on expiry or 401.
 - **Paging:** the API is offset-paged and refuses offsets past 10,000, so the range is read in `EIOS_WINDOW_MINUTES` windows, halving any window that reports ≥ 10,000 articles.
 - **Range:** first run reads the last `EIOS_BACKFILL_HOURS`; later runs resume from `last_crawled_at` minus a 15-minute overlap. Articles already stored for the source are skipped.
-- **Full text:** the list endpoint returns only a snippet. Every article is stored with its snippet; for keyword-matched ones the body is replaced by EIOS `fullText` (only returned to accounts with full-text access) or else the original `link` fetched with `HTMLFetcher`. GPHIN (subscription) and social-media links are not fetched. `metadata.body_source` records which was used (`eios_fulltext` / `original_link` / `eios_snippet`).
-- **Metadata:** EIOS id, countries, locations, categories, source and translations are kept in `RawArticle.metadata`; English translations also feed the keyword filter (FR-12).
-- Articles are streamed page by page, so matches are published while the board is still being read.
+- **Full text:** the list endpoint returns only a snippet, and EIOS returns `fullText` only to accounts with full-text access, which this service account does not have. So for **every** article the crawler fetches the original `link` (`EIOS_LINK_FETCH_WORKERS` pages in parallel) and extracts the article text.
+  - **Which body is kept:** the page text, if it is longer than the snippet. Otherwise the EIOS snippet.
+  - **Keyword matching:** runs on that full body plus the English translation. A disease mentioned only deep in an article is still caught.
+  - **Retries:** timeouts and HTTP 429/5xx get one retry. Sites that refuse the crawler (403) are not worked around (SRS §2.5).
+  - **Not fetched:** GPHIN (subscription) and social-media links.
+  - **Recorded per article:** `metadata.body_source` (`eios_fulltext` / `original_link` / `eios_snippet`), and `metadata.link_error` for why a snippet was kept (e.g. `HTTP 403`, `timeout`).
+  - **Live sample:** about 75–80% of articles get the full body, typically about 3,000 characters.
+- **Metadata:** the complete EIOS record is kept, unchanged, in `RawArticle.metadata["eios"]`, about 3 KB per article.
+  - **Fields:** `id`, `eiosUrl`, `title`, `translatedTitle`, `description`, `translatedDescription`, `abstractiveSummary`, `link`, `pubDate`, `processedOnDate`, `language`/`languageIso`, `source`, `categories`, `countries`, `locations`, duplicate flags, `recommenderPrediction`, `highlights`, plus `fullText` when EIOS returns it.
+  - **Snippet stays available:** the EIOS title, description and summary are kept even when the body is the original page's text.
+  - **Translations:** the English translations also feed the keyword filter (FR-12).
+- **Streaming:** articles are released as their pages arrive, so matches are published while the board is still being read. One slow site doesn't hold up the others.
 
 ---
 
@@ -149,6 +158,8 @@ Language detection is intentionally **not** done here — it is the pipeline's r
 ### 5. Dedup Pipeline (`crawler/dedup/`)
 
 Three chained layers catch duplicates before storage (FR-11, FR-23). Each layer that fires creates a `RawArticle` record with `processing_status = suppressed`, an audit link (`duplicate_of`) pointing to the original, and a `suppression_reason`.
+
+Re-crawling a source is not duplication. Items the same source already stored are skipped before these layers run. This covers unchanged feed items, the same HTML page, and EIOS items re-polled in the overlap window. Skipped items are not stored again and not reprocessed. They are counted as "Already stored" on the run page. Only repeats from a *different* source become suppressed duplicate records.
 
 #### Layer 1 — URL Fingerprint (`dedup/url_fingerprint.py`)
 
@@ -215,6 +226,7 @@ Appends keyword-matched articles to a **Redis Stream** (`LLM_QUEUE_NAME`, defaul
 | `title` / `body` | Extracted content |
 | `language` | BCP-47 tag detected by langdetect |
 | `matched_diseases` | JSON-encoded list — e.g. `["dengue", "cholera"]` |
+| `metadata` | JSON-encoded object, `{}` if none. For EIOS: `{"eios": {...complete EIOS record...}, "body_source": ..., "link_error": ...}` |
 | `fetched_at` | ISO-8601 timestamp of the crawl |
 | `published_at` | ISO-8601 timestamp of the stream publish |
 
@@ -413,6 +425,7 @@ All settings are environment-variable-driven via `django-environ`. Copy `.env.ex
 | `EIOS_BACKFILL_HOURS` | `24` | First-run look-back; later runs resume from the last crawl |
 | `EIOS_WINDOW_MINUTES` | `60` | Time-window size for paging the board (each window must hold < 10,000 articles; split automatically) |
 | `EIOS_PAGE_SIZE` | `100` | Articles per page (API max 100) |
+| `EIOS_LINK_FETCH_WORKERS` | `16` | Original article pages fetched in parallel for full text |
 
 ---
 
@@ -513,7 +526,8 @@ Open `http://127.0.0.1:8000/` (staff login required). Only `runserver` is needed
 - **Run page** (`/crawl/runs/<id>/`) updates every second:
   - **Progress:** the bar, current stage, elapsed time, articles/s and time remaining. EIOS
     progress follows the time range being read, one window at a time.
-  - **Counters:** processed, new, keyword-matched, sent to the LLM queue, duplicates, errors.
+  - **Counters:** processed, new, keyword-matched, sent to the LLM queue, duplicates (from
+    other sources), already stored (this source had them; skipped), errors.
   - **Feeds:** live lists of matched and latest articles. Each matched article shows whether
     it has the full text or only the EIOS snippet.
   - **Activity:** a log of stages, warnings (e.g. Redis unreachable) and errors.
@@ -585,7 +599,7 @@ pipenv run pytest tests/test_pipeline.py -v
 pipenv run pytest --cov=crawler --cov=sources --cov=raw_content
 ```
 
-**Current suite: 163 tests, 0 failures.**
+**Current suite: 175 tests, 0 failures.**
 
 | Test file | What it covers |
 |---|---|

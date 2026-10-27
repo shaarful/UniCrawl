@@ -50,6 +50,12 @@ class CrawlRun(models.Model):
     published = models.PositiveIntegerField(default=0)
     duplicates = models.PositiveIntegerField(default=0)
     errors = models.PositiveIntegerField(default=0)
+    skipped = models.PositiveIntegerField(
+        default=0, help_text="Items the source had already stored; not reprocessed.",
+    )
+    full_text = models.PositiveIntegerField(
+        default=0, help_text="EIOS articles whose full body was retrieved (not just the snippet).",
+    )
     events = models.JSONField(default=list, blank=True)
     error = models.TextField(blank=True)
     cancel_requested = models.BooleanField(default=False)

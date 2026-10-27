@@ -133,21 +133,57 @@ def test_rss_pipeline_stores_per_entry_urls():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.django_db
-def test_url_dedup_suppresses_second_crawl_of_same_page():
+def test_recrawl_of_same_page_stores_nothing_new():
     source = _source()
     mock_fetcher = _mock_fetcher(_result(source.url, _HTML_BODY))
     with patch("crawler.pipeline._fetcher_for", return_value=mock_fetcher):
         run_for_source(source.id)  # first crawl
-        run_for_source(source.id)  # second crawl — same URL
+        run_for_source(source.id)  # second crawl — same URL, already stored
 
-    articles = list(RawArticle.objects.filter(source=source).order_by("id"))
-    assert len(articles) == 2
-    original, dup = articles
-    assert not original.is_duplicate
-    assert dup.is_duplicate
-    assert dup.duplicate_of_id == original.id
-    assert dup.suppression_reason == RawArticle.SuppressionReason.URL
-    assert dup.processing_status == RawArticle.ProcessingStatus.SUPPRESSED
+    article = RawArticle.objects.get(source=source)
+    assert not article.is_duplicate
+
+
+@pytest.mark.django_db
+def test_recrawl_of_feed_stores_only_new_items():
+    source = _source(Source.ContentType.RSS, url="https://example.com/feed.xml")
+    # Same feed before the H5N1 item was published.
+    first = _RSS_BODY[:_RSS_BODY.index(b"  <item>\n    <title>H5N1")] + b"</channel>\n</rss>"
+    with patch("crawler.pipeline._fetcher_for",
+               return_value=_mock_fetcher(_result(source.url, first))):
+        run_for_source(source.id)
+    assert RawArticle.objects.filter(source=source).count() == 1
+
+    with patch("crawler.pipeline._fetcher_for",
+               return_value=_mock_fetcher(_result(source.url, _RSS_BODY))):
+        run_for_source(source.id)
+
+    urls = sorted(RawArticle.objects.filter(source=source).values_list("url", flat=True))
+    assert urls == ["https://example.com/cholera", "https://example.com/h5n1"]
+    assert not RawArticle.objects.filter(is_duplicate=True).exists()
+
+
+@pytest.mark.django_db
+def test_url_dedup_suppresses_same_article_from_another_source():
+    feed_a = _source(Source.ContentType.RSS, url="https://alpha.example.com/feed.xml")
+    feed_b = Source.objects.create(
+        name="Other feed", url="https://beta.example.com/feed.xml",
+        content_type=Source.ContentType.RSS,
+    )
+    with patch("crawler.pipeline._fetcher_for",
+               return_value=_mock_fetcher(_result(feed_a.url, _RSS_BODY))):
+        run_for_source(feed_a.id)
+    with patch("crawler.pipeline._fetcher_for",
+               return_value=_mock_fetcher(_result(feed_b.url, _RSS_BODY))):
+        run_for_source(feed_b.id)
+
+    dups = RawArticle.objects.filter(source=feed_b)
+    assert dups.count() == 2
+    for dup in dups:
+        assert dup.is_duplicate
+        assert dup.suppression_reason == RawArticle.SuppressionReason.URL
+        assert dup.processing_status == RawArticle.ProcessingStatus.SUPPRESSED
+        assert dup.duplicate_of.source == feed_a
 
 
 @pytest.mark.django_db

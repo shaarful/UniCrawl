@@ -90,8 +90,9 @@
   let first = true;
 
   const STATS = [
-    ["processed", "Processed"], ["new", "New stored"], ["matched", "Keyword matched"],
-    ["published", "Sent to LLM queue"], ["duplicates", "Duplicates"], ["errors", "Errors"],
+    ["processed", "Processed"], ["full_text", "Full text", "eios"], ["new", "New stored"],
+    ["matched", "Keyword matched"], ["published", "Sent to LLM queue"],
+    ["duplicates", "Duplicates"], ["skipped", "Already stored"], ["errors", "Errors"],
   ];
   const BODY_SOURCE = {original_link: "full text (original page)", eios_fulltext: "full text (EIOS)",
                        eios_snippet: "snippet only"};
@@ -122,16 +123,30 @@
       ? `Last update ${ago(run.heartbeat_at)}` : `Started ${new Date(run.started_at).toLocaleString()} (${run.trigger})`;
     document.getElementById("error").replaceChildren(run.error ? el("div", {class: "errbox"}, run.error) : "");
 
-    document.getElementById("stats").replaceChildren(...STATS.map(([key, label]) =>
-      el("div", {class: "stat " + key}, el("div", {class: "label"}, label),
-         el("div", {class: "value"}, fmt(run[key])))));
+    document.getElementById("stats").replaceChildren(...STATS
+      .filter(([, , only]) => only !== "eios" || run.is_eios)
+      .map(([key, label]) => {
+        const share = key === "full_text" && run.processed
+          ? el("span", {class: "muted small"}, ` ${Math.round(100 * run.full_text / run.processed)}%`)
+          : null;
+        return el("div", {class: "stat " + key}, el("div", {class: "label"}, label),
+                  el("div", {class: "value"}, fmt(run[key]), share));
+      }));
     document.getElementById("matched-count").textContent = run.matched ? `(${fmt(run.matched)})` : "";
 
     document.getElementById("events").replaceChildren(...run.events.slice().reverse().map(e =>
       el("li", {class: e.level}, `${new Date(e.t).toLocaleTimeString()}  ${e.msg}`)));
   }
 
-  function articleItem(a, showSnippetInfo) {
+  function bodyInfo(a) {
+    if (!a.body_source) return null;
+    const label = BODY_SOURCE[a.body_source] || a.body_source;
+    if (a.body_source !== "eios_snippet") return el("span", {class: "pill succeeded"}, label);
+    return el("span", {class: "pill", title: a.link_error || ""},
+              a.link_error ? `${label} — ${a.link_error}` : label);
+  }
+
+  function articleItem(a) {
     const isNew = !first && !seen.has(a.id);
     seen.add(a.id);
     return el("li", {class: isNew ? "new" : null},
@@ -141,15 +156,15 @@
         el("span", {class: "pill " + a.status}, a.status),
         a.diseases.map(d => el("span", {class: "pill matched"}, d)),
         a.language ? el("span", {}, a.language) : null,
-        showSnippetInfo && a.body_source ? el("span", {}, BODY_SOURCE[a.body_source] || a.body_source) : null,
+        bodyInfo(a),
         el("span", {}, fmt(a.body_chars) + " chars"),
         el("a", {href: a.admin_url}, "details")));
   }
 
-  function renderFeed(id, articles, emptyText, showSnippetInfo) {
+  function renderFeed(id, articles, emptyText) {
     const list = document.getElementById(id);
     list.replaceChildren(...(articles.length
-      ? articles.map(a => articleItem(a, showSnippetInfo))
+      ? articles.map(articleItem)
       : [el("li", {class: "muted"}, emptyText)]));
   }
 
@@ -161,8 +176,8 @@
       const data = await res.json();
       running = data.run.status === "running";
       renderRun(data.run);
-      renderFeed("matched", data.matched, "Nothing matched yet.", true);
-      renderFeed("latest", data.latest, running ? "Waiting for articles…" : "No new articles in this run.", false);
+      renderFeed("matched", data.matched, "Nothing matched yet.");
+      renderFeed("latest", data.latest, running ? "Waiting for articles…" : "No new articles in this run.");
       first = false;
     } catch (e) {
       document.getElementById("heartbeat").textContent = "Connection lost — retrying…";

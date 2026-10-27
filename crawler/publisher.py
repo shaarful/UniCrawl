@@ -44,6 +44,9 @@ def publish_matched(raw_article_id: int) -> None:
         "body": article.body,
         "language": article.language or "",
         "matched_diseases": json.dumps(article.matched_diseases or []),
+        # Source-specific provenance, e.g. the complete EIOS record (countries,
+        # locations, categories, translations) and which body was used.
+        "metadata": json.dumps(article.metadata or {}, ensure_ascii=False),
         "fetched_at": article.fetched_at.isoformat(),
         "published_at": timezone.now().isoformat(),
     }

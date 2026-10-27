@@ -128,6 +128,7 @@ EIOS_BOARD_ID = env("EIOS_BOARD_ID", default="")
 EIOS_BACKFILL_HOURS = env.int("EIOS_BACKFILL_HOURS", default=24)
 EIOS_WINDOW_MINUTES = env.int("EIOS_WINDOW_MINUTES", default=60)
 EIOS_PAGE_SIZE = env.int("EIOS_PAGE_SIZE", default=100)
+EIOS_LINK_FETCH_WORKERS = env.int("EIOS_LINK_FETCH_WORKERS", default=16)
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},

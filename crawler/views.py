@@ -42,6 +42,9 @@ def _run_json(run: CrawlRun) -> dict:
         "published": run.published,
         "duplicates": run.duplicates,
         "errors": run.errors,
+        "skipped": run.skipped,
+        "full_text": run.full_text,
+        "is_eios": run.source.content_type == Source.ContentType.EIOS,
         "error": run.error,
         "events": run.events or [],
         "cancel_requested": run.cancel_requested,
@@ -60,6 +63,7 @@ def _article_json(article: RawArticle) -> dict:
         "language": article.language,
         "diseases": article.matched_diseases or [],
         "body_source": (article.metadata or {}).get("body_source", ""),
+        "link_error": (article.metadata or {}).get("link_error", ""),
         "body_chars": len(article.body),
         "admin_url": reverse("admin:raw_content_rawarticle_change", args=[article.pk]),
     }

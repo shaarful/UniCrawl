@@ -98,6 +98,32 @@ def _extract_candidates(source: Source, result) -> list[_Article]:
     ]
 
 
+def _already_stored(source: Source, fp: str) -> bool:
+    """Whether this source already stored the article with URL fingerprint `fp`.
+
+    Re-reading a feed or re-polling an EIOS window returns items the source
+    already has. They are not new, so they are skipped outright rather than
+    recorded as suppressed duplicates; repeats from *other* sources still go
+    through the dedup layers (FR-11/FR-23).
+    """
+    from raw_content.models import RawArticle
+
+    return RawArticle.objects.filter(source=source, url_fingerprint=fp).exists()
+
+
+def _unseen(source: Source, candidates: list[_Article]) -> list[_Article]:
+    """Candidates this source has not stored yet, without repeats within the batch."""
+    seen: set[str] = set()
+    unseen = []
+    for article in candidates:
+        fp = _uf.fingerprint(article.url)
+        if fp in seen or _already_stored(source, fp):
+            continue
+        seen.add(fp)
+        unseen.append(article)
+    return unseen
+
+
 # ---------------------------------------------------------------------------
 # EIOS candidates (FR-07)
 # ---------------------------------------------------------------------------
@@ -115,15 +141,10 @@ _EIOS_UNFETCHABLE_SOURCE_TYPE_PREFIXES = ("socialmedia",)
 # the service account lacks full-text access until WHO grants it.
 _EIOS_FULLTEXT_MAX_MISSES = 3
 
-# Concurrent original-link fetches per page of matched articles.
-_EIOS_LINK_FETCH_WORKERS = 8
-
-_EIOS_METADATA_FIELDS = (
-    "id", "eiosUrl", "pubDate", "processedOnDate", "languageIso", "source",
-    "categories", "countries", "locations", "isDuplicate", "hasDuplicates",
-    "duplicateIdOf", "translatedTitle", "translatedDescription",
-    "abstractiveSummary",
-)
+# Original-article fetches: per-request timeout, and failures worth one retry.
+_LINK_FETCH_TIMEOUT = 20.0
+_LINK_RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+_LINK_RETRY_DELAY_SECONDS = 1.0
 
 
 def _join_text(*parts: str | None) -> str:
@@ -142,21 +163,42 @@ def _eios_link_fetchable(item: dict) -> bool:
     return not (src.get("type") or "").lower().startswith(_EIOS_UNFETCHABLE_SOURCE_TYPE_PREFIXES)
 
 
-def _fetch_original_body(link: str) -> str:
+def _fetch_original_body(link: str) -> tuple[str, str]:
+    """Main text of the original article page, and why it failed ("" on success).
+
+    Timeouts and transient server errors are retried once. Sites that refuse
+    the crawler (403 etc.) are not worked around (SRS §2.5).
+    """
+    import time
+
     import httpx
 
     from crawler.extractors.base import extract_html
     from crawler.fetchers.html import HTMLFetcher
 
-    try:
-        result = HTMLFetcher().fetch(link)
-    except httpx.HTTPError as exc:
-        log.warning("eios.link_fetch_failed", url=link, error=str(exc))
-        return ""
-    if result.status_code >= 400:
-        log.warning("eios.link_fetch_failed", url=link, status=result.status_code)
-        return ""
-    return extract_html(result.body, url=result.final_url).body
+    fetcher = HTMLFetcher(timeout=_LINK_FETCH_TIMEOUT)
+    reason = ""
+    for attempt in (1, 2):
+        try:
+            result = fetcher.fetch(link)
+        except httpx.TimeoutException:
+            reason, retry = "timeout", True
+        except httpx.HTTPError as exc:
+            reason, retry = type(exc).__name__, False
+        else:
+            if result.status_code < 400:
+                content_type = (result.headers.get("content-type") or "").lower()
+                if "pdf" in content_type:
+                    return "", "PDF (not extracted)"
+                body = extract_html(result.body, url=result.final_url).body
+                return body, "" if body else "no article text found on page"
+            reason = f"HTTP {result.status_code}"
+            retry = result.status_code in _LINK_RETRY_STATUSES
+        if not retry or attempt == 2:
+            break
+        time.sleep(_LINK_RETRY_DELAY_SECONDS)
+    log.warning("eios.link_fetch_failed", url=link, reason=reason)
+    return "", reason
 
 
 class _EIOSFullText:
@@ -186,10 +228,9 @@ def _eios_window(source: Source, now) -> tuple:
     return now - timedelta(hours=settings.EIOS_BACKFILL_HOURS), now
 
 
-def _eios_article(source: Source, item: dict, link: str) -> tuple[_Article, bool]:
-    """Snippet-bodied article for an EIOS item, and whether it keyword-matches."""
-    from crawler.filters.keyword import matches_active_diseases
-
+def _eios_article(source: Source, item: dict, link: str) -> _Article:
+    """Snippet-bodied article for an EIOS item; the body is replaced if the
+    original page yields more text."""
     title = item.get("title") or ""
     language = item.get("languageIso") or source.language_hint or ""
     snippet = _join_text(item.get("description"), item.get("abstractiveSummary"))
@@ -198,12 +239,7 @@ def _eios_article(source: Source, item: dict, link: str) -> tuple[_Article, bool
         item.get("translatedDescription"),
         item.get("translatedAbstractiveSummary"),
     )
-    matched = bool(matches_active_diseases(
-        _join_text(title, snippet, translation),
-        language=language,
-        keyword_overrides=source.keyword_filter_overrides,
-    ))
-    article = _Article(
+    return _Article(
         url=link,
         final_url=link,
         http_status=200,
@@ -213,34 +249,40 @@ def _eios_article(source: Source, item: dict, link: str) -> tuple[_Article, bool
         published_at=item.get("pubDate"),
         match_text=_join_text(title, translation),
         metadata={
-            "eios": {
-                k: item[k] for k in _EIOS_METADATA_FIELDS if item.get(k) not in (None, "", [])
-            },
+            # The complete EIOS record as returned (title, description, translations,
+            # summary, countries, locations, categories, source, scores, ...), so
+            # nothing EIOS provides is lost when the body is replaced by page text.
+            "eios": dict(item),
             "body_source": "eios_snippet",
         },
     )
-    return article, matched
 
 
 def _eios_candidates(
     source: Source, fetcher, fetched_at, progress: _progress.NullProgress,
 ) -> Iterator[_Article]:
-    """Board articles since the last crawl, with full text for keyword matches.
+    """Board articles since the last crawl, each with the fullest body available.
 
-    The list endpoint only carries a snippet. Fetching the full body for every
-    article (~75k/day on a broad board) is impractical, so the snippet plus its
-    English translation is keyword-matched first and only matches are enriched:
-    EIOS fullText if granted, else the original link, else the snippet.
+    The list endpoint only carries a snippet, so every article's body comes from
+    EIOS fullText if the account is granted it, else the original article page
+    (fetched in parallel), else the snippet. Keyword matching then runs on that
+    full body plus the English translation, so diseases mentioned only deep in
+    an article are still caught. `metadata.body_source` records which body was
+    used and `metadata.link_error` why the original page was not.
 
-    Articles are yielded page by page, so matches are persisted and published
-    while the rest of the board is still being read (FR-08 ≤60s hand-off).
+    Articles are yielded as their pages arrive, so matches are persisted and
+    published while the rest of the board is still being read (FR-08 ≤60s
+    hand-off).
     """
-    from concurrent.futures import ThreadPoolExecutor
-    from itertools import batched
+    from concurrent.futures import (
+        FIRST_COMPLETED,
+        Future,
+        ThreadPoolExecutor,
+        as_completed,
+        wait,
+    )
 
-    from crawler.fetchers.eios import MAX_PAGE_SIZE
-    from raw_content.models import RawArticle
-
+    workers = settings.EIOS_LINK_FETCH_WORKERS
     since, until = _eios_window(source, fetched_at)
     fulltext = _EIOSFullText(fetcher, source.url)
     seen: set[str] = set()
@@ -261,34 +303,59 @@ def _eios_candidates(
     )
     items = fetcher.iter_board_items(source.url, since=since, until=until, on_window=on_window)
 
-    with ThreadPoolExecutor(max_workers=_EIOS_LINK_FETCH_WORKERS) as pool:
-        for batch in batched(items, MAX_PAGE_SIZE, strict=False):
-            pending = []
-            for item in batch:
-                link = item.get("link") or item.get("eiosUrl")
-                if not link:
-                    continue
-                fp = _uf.fingerprint(link)
-                stored = RawArticle.objects.filter(source=source, url_fingerprint=fp)
-                if fp in seen or stored.exists():
-                    continue  # re-polled in the overlap window — already stored
-                seen.add(fp)
+    def complete(article: _Article, page: Future | None = None) -> _Article:
+        if page is not None:
+            body, reason = page.result()
+            if len(body) > len(article.body):
+                article.body = body
+                article.metadata["body_source"] = "original_link"
+            else:
+                article.metadata["link_error"] = reason or "page text shorter than snippet"
+        if article.metadata["body_source"] != "eios_snippet":
+            progress.full_text()
+        return article
 
-                article, matched = _eios_article(source, item, link)
-                link_body = None
-                if matched:
-                    if full := fulltext.get(item["id"]):
-                        article.body = full
-                        article.metadata["body_source"] = "eios_fulltext"
-                    elif _eios_link_fetchable(item):
-                        link_body = pool.submit(_fetch_original_body, link)
-                pending.append((article, link_body))
+    # Up to `in_flight` page fetches are outstanding so every worker stays busy.
+    # Articles are released as soon as their own page arrives, so one slow site
+    # never holds up the rest.
+    in_flight = workers * 2
+    pending: dict[Future, _Article] = {}
+    pool = ThreadPoolExecutor(max_workers=workers)
+    try:
+        for item in items:
+            link = item.get("link") or item.get("eiosUrl")
+            if not link:
+                continue
+            fp = _uf.fingerprint(link)
+            if fp in seen or _already_stored(source, fp):
+                progress.skip()  # re-polled in the overlap window — already stored
+                continue
+            seen.add(fp)
 
-            for article, link_body in pending:
-                if link_body is not None and len(body := link_body.result()) > len(article.body):
-                    article.body = body
-                    article.metadata["body_source"] = "original_link"
-                yield article
+            article = _eios_article(source, item, link)
+            if full := fulltext.get(item["id"]):
+                article.body = full
+                article.metadata["eios"]["fullText"] = full
+                article.metadata["body_source"] = "eios_fulltext"
+                yield complete(article)
+            elif _eios_link_fetchable(item):
+                pending[pool.submit(_fetch_original_body, link)] = article
+            else:
+                article.metadata["link_error"] = "not publicly accessible (GPHIN / social media)"
+                yield complete(article)
+
+            if len(pending) >= in_flight:
+                done, _ = wait(pending, return_when=FIRST_COMPLETED)
+            else:
+                done = [page for page in pending if page.done()]
+            for page in done:
+                yield complete(pending.pop(page), page)
+
+        for page in as_completed(list(pending)):
+            yield complete(pending.pop(page), page)
+    finally:
+        # Stopped mid-stream: don't wait for pages still downloading.
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 # ---------------------------------------------------------------------------
@@ -472,9 +539,15 @@ def run_for_source(source_id: int, progress: _progress.NullProgress | None = Non
             if result.status_code >= 400:
                 bound.warning("pipeline.fetch_error", status=result.status_code)
                 raise RuntimeError(f"HTTP {result.status_code} fetching {source.url}")
-            candidates = _extract_candidates(source, result)
-            bound.info("pipeline.candidates", count=len(candidates))
-            progress.stage(f"Processing {len(candidates)} articles", percent=0)
+            extracted = _extract_candidates(source, result)
+            candidates = _unseen(source, extracted)
+            skipped = len(extracted) - len(candidates)
+            bound.info("pipeline.candidates", count=len(candidates), already_stored=skipped)
+            progress.skip(skipped)
+            progress.stage(
+                f"Processing {len(candidates)} new articles ({skipped} already stored)",
+                percent=0,
+            )
             progress.segment(0, 100, len(candidates))
 
         processed = 0
