@@ -20,8 +20,8 @@ from __future__ import annotations
 
 import re
 import time
-from collections.abc import Iterator
-from datetime import datetime, timedelta, timezone
+from collections.abc import Callable, Iterator
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -56,7 +56,7 @@ def parse_board_url(url: str) -> tuple[str, str]:
 
 
 def _iso(dt: datetime) -> str:
-    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class EIOSFetcher(HttpFetcher):
@@ -159,16 +159,26 @@ class EIOSFetcher(HttpFetcher):
     # --- Board articles -------------------------------------------------------
 
     def iter_board_items(
-        self, url: str, *, since: datetime, until: datetime
+        self,
+        url: str,
+        *,
+        since: datetime,
+        until: datetime,
+        on_window: Callable[[datetime, datetime, int], None] | None = None,
     ) -> Iterator[dict]:
-        """Yield every article on the board fetched within [since, until)."""
+        """Yield every article on the board fetched within [since, until).
+
+        `on_window(since, until, count)` is called before each window is paged.
+        """
         window_start = since
         while window_start < until:
             window_end = min(window_start + self.window, until)
-            yield from self._iter_window(url, window_start, window_end)
+            yield from self._iter_window(url, window_start, window_end, on_window)
             window_start = window_end
 
-    def _iter_window(self, url: str, since: datetime, until: datetime) -> Iterator[dict]:
+    def _iter_window(
+        self, url: str, since: datetime, until: datetime, on_window=None,
+    ) -> Iterator[dict]:
         params = {"timeSince": _iso(since), "timeUntil": _iso(until)}
         first = self._get_json(url, {**params, "start": 0, "limit": self.page_size})
         count = first.get("count") or 0
@@ -176,11 +186,13 @@ class EIOSFetcher(HttpFetcher):
         if count >= MAX_RESULT_WINDOW and until - since > _MIN_WINDOW:
             mid = since + (until - since) / 2
             log.info("eios.window_split", since=_iso(since), until=_iso(until), count=count)
-            yield from self._iter_window(url, since, mid)
-            yield from self._iter_window(url, mid, until)
+            yield from self._iter_window(url, since, mid, on_window)
+            yield from self._iter_window(url, mid, until, on_window)
             return
 
         log.info("eios.window", since=_iso(since), until=_iso(until), count=count)
+        if on_window is not None:
+            on_window(since, until, count)
         page = first.get("result") or []
         start = 0
         while page:
@@ -189,13 +201,16 @@ class EIOSFetcher(HttpFetcher):
             if start >= min(count, MAX_RESULT_WINDOW):
                 break
             limit = min(self.page_size, MAX_RESULT_WINDOW - start)
-            page = self._get_json(url, {**params, "start": start, "limit": limit}).get("result") or []
+            page = self._get_json(url, {**params, "start": start, "limit": limit})
+            page = page.get("result") or []
 
     def get_item(self, url: str, item_id: str) -> dict | None:
         """Return article detail (may include `fullText`), or None if unavailable."""
         api_root, _ = parse_board_url(url)
         response = self._get(f"{api_root}/Items/{item_id}")
         if response.status_code != 200:
-            log.warning("eios.item_detail_unavailable", item_id=item_id, status=response.status_code)
+            log.warning(
+                "eios.item_detail_unavailable", item_id=item_id, status=response.status_code,
+            )
             return None
         return response.json()

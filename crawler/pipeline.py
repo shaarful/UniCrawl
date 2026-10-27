@@ -21,6 +21,7 @@ import structlog
 from django.conf import settings
 from django.utils import timezone
 
+from crawler import progress as _progress
 from crawler.dedup import content_hash as _ch
 from crawler.dedup import url_fingerprint as _uf
 from sources.models import Source
@@ -212,14 +213,18 @@ def _eios_article(source: Source, item: dict, link: str) -> tuple[_Article, bool
         published_at=item.get("pubDate"),
         match_text=_join_text(title, translation),
         metadata={
-            "eios": {k: item[k] for k in _EIOS_METADATA_FIELDS if item.get(k) not in (None, "", [])},
+            "eios": {
+                k: item[k] for k in _EIOS_METADATA_FIELDS if item.get(k) not in (None, "", [])
+            },
             "body_source": "eios_snippet",
         },
     )
     return article, matched
 
 
-def _eios_candidates(source: Source, fetcher, fetched_at) -> Iterator[_Article]:
+def _eios_candidates(
+    source: Source, fetcher, fetched_at, progress: _progress.NullProgress,
+) -> Iterator[_Article]:
     """Board articles since the last crawl, with full text for keyword matches.
 
     The list endpoint only carries a snippet. Fetching the full body for every
@@ -239,17 +244,33 @@ def _eios_candidates(source: Source, fetcher, fetched_at) -> Iterator[_Article]:
     since, until = _eios_window(source, fetched_at)
     fulltext = _EIOSFullText(fetcher, source.url)
     seen: set[str] = set()
-    items = fetcher.iter_board_items(source.url, since=since, until=until)
+    span = (until - since).total_seconds() or 1.0
+
+    def on_window(w_since, w_until, count: int) -> None:
+        start = 100 * (w_since - since).total_seconds() / span
+        end = 100 * (w_until - since).total_seconds() / span
+        progress.stage(
+            f"Reading EIOS {w_since:%d %b %H:%M}–{w_until:%H:%M} UTC ({count:,} articles)",
+            percent=start,
+        )
+        progress.segment(start, end, count)
+
+    progress.stage(
+        f"Connecting to EIOS — reading {since:%d %b %H:%M} to {until:%d %b %H:%M} UTC",
+        percent=0,
+    )
+    items = fetcher.iter_board_items(source.url, since=since, until=until, on_window=on_window)
 
     with ThreadPoolExecutor(max_workers=_EIOS_LINK_FETCH_WORKERS) as pool:
-        for batch in batched(items, MAX_PAGE_SIZE):
+        for batch in batched(items, MAX_PAGE_SIZE, strict=False):
             pending = []
             for item in batch:
                 link = item.get("link") or item.get("eiosUrl")
                 if not link:
                     continue
                 fp = _uf.fingerprint(link)
-                if fp in seen or RawArticle.objects.filter(source=source, url_fingerprint=fp).exists():
+                stored = RawArticle.objects.filter(source=source, url_fingerprint=fp)
+                if fp in seen or stored.exists():
                     continue  # re-polled in the overlap window — already stored
                 seen.add(fp)
 
@@ -327,20 +348,21 @@ def _suppress(
 # Per-article processing
 # ---------------------------------------------------------------------------
 
-def _process_article(source: Source, article: _Article, fetched_at) -> None:
+def _process_article(source: Source, article: _Article, fetched_at) -> str:
+    """Dedup, filter, persist and publish one article; returns a progress outcome."""
     from raw_content.models import RawArticle
 
     # Layer 1: URL fingerprint dedup
     dup_id = _uf.find_duplicate(article.url)
     if dup_id is not None:
         _suppress(source, article, fetched_at, dup_id, RawArticle.SuppressionReason.URL)
-        return
+        return _progress.SUPPRESSED
 
     # Layer 2: content hash dedup (skip empty bodies — they would all hash identically)
     dup_id = _ch.find_duplicate(article.body) if article.body else None
     if dup_id is not None:
         _suppress(source, article, fetched_at, dup_id, RawArticle.SuppressionReason.CONTENT)
-        return
+        return _progress.SUPPRESSED
 
     # Layer 3: semantic dedup (FR-23) — enabled via CRAWLER_SEMANTIC_DEDUP_ENABLED
     embedding: list[float] | None = None
@@ -352,7 +374,7 @@ def _process_article(source: Source, article: _Article, fetched_at) -> None:
             dup_id = semantic_find(embedding)
             if dup_id is not None:
                 _suppress(source, article, fetched_at, dup_id, RawArticle.SuppressionReason.SEMANTIC)
-                return
+                return _progress.SUPPRESSED
 
     # Language detection (FR-12)
     lang = _detect_language(article.body, article.language)
@@ -398,52 +420,86 @@ def _process_article(source: Source, article: _Article, fetched_at) -> None:
         source=source.name,
     )
 
+    if not is_matched:
+        return _progress.STORED
+
     # Publish to LLM queue (FR-08 ≤60s SLA)
-    if is_matched:
-        try:
-            from crawler.publisher import publish_matched
-            publish_matched(record.id)
-            record.processing_status = RawArticle.ProcessingStatus.PUBLISHED
-            record.save(update_fields=["processing_status"])
-            log.info("article.published", id=record.id, source=source.name)
-        except NotImplementedError:
-            # Publisher not yet wired — article stays MATCHED for retry
-            log.warning("publisher.not_implemented", id=record.id, source=source.name)
+    try:
+        from crawler.publisher import publish_matched
+        publish_matched(record.id)
+        record.processing_status = RawArticle.ProcessingStatus.PUBLISHED
+        record.save(update_fields=["processing_status"])
+        log.info("article.published", id=record.id, source=source.name)
+        return _progress.PUBLISHED
+    except NotImplementedError:
+        # Publisher not yet wired — article stays MATCHED for retry
+        log.warning("publisher.not_implemented", id=record.id, source=source.name)
+        return _progress.MATCHED
+    except Exception as exc:
+        # e.g. Redis unreachable — the article is stored and stays MATCHED for retry
+        log.warning("publisher.failed", id=record.id, source=source.name, error=str(exc))
+        raise _progress.PublishFailed(f"{type(exc).__name__}: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def run_for_source(source_id: int) -> None:
-    """Execute the full pipeline for a single source."""
+def run_for_source(source_id: int, progress: _progress.NullProgress | None = None) -> None:
+    """Execute the full pipeline for a single source.
+
+    `progress` receives stage, per-article and event updates (crawl dashboard);
+    it may raise progress.CrawlCancelled to stop the run, in which case the
+    source's crawl state is left untouched.
+    """
+    progress = progress or _progress.NullProgress()
     source = Source.objects.get(pk=source_id)
     fetched_at = timezone.now()
     bound = log.bind(source=source.name, source_id=source_id)
     bound.info("pipeline.start", content_type=source.content_type)
+    progress.begin(fetched_at)
 
     fetcher = _fetcher_for(source)
-    # Network errors propagate to the caller (scheduler) for FR-14 back-off.
-    if source.content_type == Source.ContentType.EIOS:
-        # Streamed: each article is processed as soon as its page is read.
-        candidates = _eios_candidates(source, fetcher, fetched_at)
-    else:
-        result = fetcher.fetch(source.url)
-        if result.status_code >= 400:
-            bound.warning("pipeline.fetch_error", status=result.status_code)
-            raise RuntimeError(f"HTTP {result.status_code} fetching {source.url}")
-        candidates = _extract_candidates(source, result)
-        bound.info("pipeline.candidates", count=len(candidates))
-
-    processed = 0
+    candidates = None
     try:
+        # Network errors propagate to the caller (scheduler) for FR-14 back-off.
+        if source.content_type == Source.ContentType.EIOS:
+            # Streamed: each article is processed as soon as its page is read.
+            candidates = _eios_candidates(source, fetcher, fetched_at, progress)
+        else:
+            progress.stage(f"Fetching {source.url}")
+            result = fetcher.fetch(source.url)
+            if result.status_code >= 400:
+                bound.warning("pipeline.fetch_error", status=result.status_code)
+                raise RuntimeError(f"HTTP {result.status_code} fetching {source.url}")
+            candidates = _extract_candidates(source, result)
+            bound.info("pipeline.candidates", count=len(candidates))
+            progress.stage(f"Processing {len(candidates)} articles", percent=0)
+            progress.segment(0, 100, len(candidates))
+
+        processed = 0
+        publish_warned = False
         for article in candidates:
             processed += 1
             try:
-                _process_article(source, article, fetched_at)
+                outcome = _process_article(source, article, fetched_at)
+            except _progress.PublishFailed as exc:
+                outcome = _progress.UNPUBLISHED
+                if not publish_warned:
+                    publish_warned = True
+                    progress.event(
+                        "warning",
+                        "Matched articles are stored but not reaching the LLM queue "
+                        f"(they stay 'matched' for retry): {exc}",
+                    )
             except Exception as exc:
                 bound.exception("pipeline.article_error", url=article.url, error=str(exc))
+                progress.event("error", f"{article.url} — {type(exc).__name__}: {exc}")
+                outcome = _progress.ERROR
+            progress.article(outcome)
     finally:
+        if hasattr(candidates, "close"):
+            candidates.close()  # stopped mid-stream: shut down the EIOS link-fetch pool
         if hasattr(fetcher, "close"):
             fetcher.close()
 

@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Crawl control{% endblock %} · UniCrawl</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1b1f24; --muted: #646d78;
+    --border: #e1e4e8; --accent: #2563eb; --accent-soft: #dbe6fd;
+    --ok: #15803d; --ok-soft: #dcfce7; --warn: #b45309; --warn-soft: #fef3c7;
+    --bad: #b91c1c; --bad-soft: #fee2e2; --run: #2563eb; --run-soft: #dbeafe;
+    --track: #e8ebef; --mono: ui-monospace, SFMono-Regular, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1216; --panel: #171b21; --text: #e6e9ed; --muted: #97a1ad;
+      --border: #2a3039; --accent: #6b9bff; --accent-soft: #1e2b47;
+      --ok: #4ade80; --ok-soft: #14301f; --warn: #fbbf24; --warn-soft: #3a2c0b;
+      --bad: #f87171; --bad-soft: #3b1515; --run: #6b9bff; --run-soft: #1c2a45;
+      --track: #262c35;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  header { display: flex; align-items: center; gap: 16px; padding: 12px 24px;
+           background: var(--panel); border-bottom: 1px solid var(--border); }
+  header .brand { font-weight: 700; font-size: 16px; color: var(--text); }
+  header nav { display: flex; gap: 16px; margin-left: auto; }
+  main { max-width: 1240px; margin: 0 auto; padding: 24px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 0 0 12px; }
+  .muted { color: var(--muted); }
+  .small { font-size: 12px; }
+  .mono { font-family: var(--mono); }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+           padding: 16px; margin-bottom: 20px; }
+  .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .spacer { flex: 1; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border);
+           vertical-align: middle; }
+  th { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase;
+       letter-spacing: .03em; }
+  tr:last-child td { border-bottom: 0; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .table-wrap { overflow-x: auto; }
+  .btn { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border);
+         background: var(--panel); color: var(--text); border-radius: 7px; padding: 6px 12px;
+         font: inherit; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .btn:hover { border-color: var(--accent); text-decoration: none; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.danger { color: var(--bad); }
+  .btn.danger:hover { border-color: var(--bad); }
+  .btn[disabled] { opacity: .5; cursor: default; }
+  .pill { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 12px;
+          font-weight: 600; background: var(--track); color: var(--muted); white-space: nowrap; }
+  .pill.running { background: var(--run-soft); color: var(--run); }
+  .pill.succeeded, .pill.published { background: var(--ok-soft); color: var(--ok); }
+  .pill.failed, .pill.interrupted { background: var(--bad-soft); color: var(--bad); }
+  .pill.cancelled, .pill.matched { background: var(--warn-soft); color: var(--warn); }
+  .bar { position: relative; height: 8px; background: var(--track); border-radius: 999px;
+         overflow: hidden; }
+  .bar > span { position: absolute; inset: 0 auto 0 0; background: var(--run);
+                border-radius: 999px; transition: width .6s ease; }
+  .bar.done > span { background: var(--ok); }
+  .bar.bad > span { background: var(--bad); }
+  .bar.indeterminate > span { width: 30% !important; animation: slide 1.2s ease-in-out infinite; }
+  @keyframes slide { from { left: -30%; } to { left: 100%; } }
+  .messages { list-style: none; padding: 0; margin: 0 0 16px; }
+  .messages li { padding: 10px 14px; border-radius: 8px; background: var(--accent-soft); }
+  @media (max-width: 640px) { main { padding: 16px; } header { padding: 12px 16px; } }
+</style>
+{% block head %}{% endblock %}
+</head>
+<body>
+<header>
+  <a class="brand" href="{% url 'crawler:dashboard' %}">UniCrawl</a>
+  <span class="muted">Crawl control</span>
+  <nav>
+    <a href="{% url 'crawler:dashboard' %}">Dashboard</a>
+    <a href="{% url 'admin:raw_content_rawarticle_changelist' %}">Articles</a>
+    <a href="{% url 'admin:index' %}">Admin</a>
+  </nav>
+</header>
+<main>
+  {% if messages %}
+    <ul class="messages">{% for m in messages %}<li>{{ m }}</li>{% endfor %}</ul>
+  {% endif %}
+  {% block content %}{% endblock %}
+</main>
+<script>
+  // Shared helpers for the live pages.
+  function el(tag, attrs, ...children) {
+    const node = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (v === null || v === undefined || v === false) continue;
+      if (k === "class") node.className = v;
+      else if (k === "style") node.style.cssText = v;
+      else node.setAttribute(k, v);
+    }
+    for (const child of children.flat()) {
+      if (child === null || child === undefined || child === false) continue;
+      node.append(child instanceof Node ? child : document.createTextNode(String(child)));
+    }
+    return node;
+  }
+  const fmt = n => (n ?? 0).toLocaleString();
+  function ago(iso) {
+    if (!iso) return "never";
+    const s = Math.round((Date.now() - new Date(iso)) / 1000);
+    if (s < 0) return "in " + duration(-s);
+    return duration(s) + " ago";
+  }
+  function duration(s) {
+    s = Math.max(0, Math.round(s));
+    if (s < 60) return s + "s";
+    const m = Math.floor(s / 60);
+    if (m < 60) return m + "m " + (s % 60) + "s";
+    return Math.floor(m / 60) + "h " + (m % 60) + "m";
+  }
+  function elapsed(run) {
+    const end = run.finished_at ? new Date(run.finished_at) : Date.now();
+    return (end - new Date(run.started_at)) / 1000;
+  }
+  function progressBar(run) {
+    const cls = ["bar"];
+    if (run.status === "succeeded") cls.push("done");
+    else if (run.status !== "running") cls.push("bad");
+    else if (run.percent === null) cls.push("indeterminate");
+    const pct = run.status === "succeeded" ? 100 : (run.percent ?? 0);
+    return el("div", {class: cls.join(" ")}, el("span", {style: `width:${pct}%`}));
+  }
+  function csrf() {
+    const m = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/);
+    return m ? decodeURIComponent(m[1]) : "";
+  }
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

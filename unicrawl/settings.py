@@ -79,6 +79,14 @@ DATABASES = {
         default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
     ),
 }
+if DATABASES["default"]["ENGINE"] == "django.db.backends.sqlite3":
+    # The crawl dashboard runs crawls in a background thread while pages poll
+    # progress: WAL lets reads proceed during writes, and the timeout waits out
+    # brief write locks instead of failing with "database is locked".
+    DATABASES["default"].setdefault("OPTIONS", {}).update({
+        "timeout": 20,
+        "init_command": "PRAGMA journal_mode=WAL;",
+    })
 
 REDIS_URL = env("REDIS_URL", default="redis://localhost:6379/0")
 

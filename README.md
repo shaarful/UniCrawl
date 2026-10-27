@@ -496,12 +496,36 @@ pipenv run python manage.py runserver
 
 | URL | What you'll find |
 |---|---|
+| `http://127.0.0.1:8000/` | **Crawl dashboard** — start crawls and watch them live (log in with your superuser) |
 | `http://127.0.0.1:8000/health/` | Liveness check — `{"status": "ok"}` |
 | `http://127.0.0.1:8000/admin/` | Django admin — browse articles, sources, keywords |
 | `http://127.0.0.1:8000/admin/raw_content/rawarticle/` | All crawled articles with status and matched diseases |
 | `http://127.0.0.1:8000/admin/sources/source/` | Configured sources with last-crawl timestamps |
 | `http://127.0.0.1:8000/admin/disease_keywords/diseasekeyword/` | Active keyword list |
 | `http://127.0.0.1:8000/sources/` | REST API for source CRUD |
+
+### Crawl dashboard (live progress)
+
+Open `http://127.0.0.1:8000/` (staff login required). Only `runserver` is needed — no Celery or Redis.
+
+- **Sources** lists every source with its article counts, last crawl, and a **▶ Run now** button.
+  Sources already being crawled show a live progress bar instead.
+- **Run page** (`/crawl/runs/<id>/`) updates every second:
+  - **Progress:** the bar, current stage, elapsed time, articles/s and time remaining. EIOS
+    progress follows the time range being read, one window at a time.
+  - **Counters:** processed, new, keyword-matched, sent to the LLM queue, duplicates, errors.
+  - **Feeds:** live lists of matched and latest articles. Each matched article shows whether
+    it has the full text or only the EIOS snippet.
+  - **Activity:** a log of stages, warnings (e.g. Redis unreachable) and errors.
+  - **■ Stop:** ends the run within about a second.
+- **A stopped run** keeps the articles it already stored. It leaves the source's crawl
+  position unchanged, so the next run re-reads the same range and skips stored items.
+
+Manual runs execute in a background thread of the web server. Scheduled runs (Celery) are
+tracked the same way and appear on the dashboard too. Each run is a `CrawlRun` row
+(`crawler/models.py`), also browsable in the admin. A source can only have one run at a time.
+If the server restarts mid-crawl, the run is marked *interrupted* after 10 minutes without an
+update.
 
 ### Triggering a crawl manually (no Celery needed)
 
@@ -561,7 +585,7 @@ pipenv run pytest tests/test_pipeline.py -v
 pipenv run pytest --cov=crawler --cov=sources --cov=raw_content
 ```
 
-**Current suite: 146 tests, 0 failures.**
+**Current suite: 163 tests, 0 failures.**
 
 | Test file | What it covers |
 |---|---|
@@ -574,6 +598,7 @@ pipenv run pytest --cov=crawler --cov=sources --cov=raw_content
 | `test_publisher.py` | Redis XADD payload shape, JSON encoding, error propagation, connection reuse |
 | `test_keyword_filter.py` | DB keyword matching, case-insensitivity, language filtering, per-source overrides |
 | `test_eios.py` | EIOS token caching/refresh, windowed paging + split at 10k, full-text fallback chain, re-poll skipping |
+| `test_crawl_runs.py` | Crawl run progress counters, stop requests, one-run-per-source, stale-run detection, dashboard views |
 | `test_semantic_dedup.py` | Cosine math, embedding computation, DB duplicate detection, pipeline integration |
 
 ---

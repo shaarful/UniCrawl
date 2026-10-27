@@ -1,0 +1,143 @@
+{% extends "crawler/base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block head %}
+<style>
+  .src-name { font-weight: 600; }
+  .src-url { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .live { min-width: 220px; }
+  .live .stage { font-size: 12px; color: var(--muted); margin-top: 4px;
+                 max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+         background: var(--run); margin-right: 6px; animation: pulse 1.2s infinite; }
+  @keyframes pulse { 50% { opacity: .3; } }
+</style>
+{% endblock %}
+{% block content %}
+<div class="row" style="margin-bottom:16px">
+  <div>
+    <h1>Crawl control</h1>
+    <div class="muted">Start a crawl and follow it live. Updates every couple of seconds.</div>
+  </div>
+  <div class="spacer"></div>
+  <span class="muted small" id="updated"></span>
+</div>
+{% csrf_token %}
+
+<section class="panel">
+  <h2>Sources</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Source</th><th>Type</th><th class="num">Articles</th><th class="num">Matched</th>
+        <th>Last crawled</th><th>Crawl</th><th></th>
+      </tr></thead>
+      <tbody id="sources"><tr><td colspan="7" class="muted">Loading…</td></tr></tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Recent runs</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Run</th><th>Source</th><th>Status</th><th>Started</th><th>Duration</th>
+        <th class="num">Processed</th><th class="num">New</th><th class="num">Matched</th>
+        <th class="num">Errors</th>
+      </tr></thead>
+      <tbody id="runs"><tr><td colspan="9" class="muted">Loading…</td></tr></tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const token = document.querySelector("[name=csrfmiddlewaretoken]").value;
+
+  function runCell(src) {
+    const run = src.run;
+    if (run && run.status === "running") {
+      return el("td", {class: "live"},
+        el("div", {class: "row", style: "gap:8px"},
+          el("span", {}, el("span", {class: "dot"}), `${run.percent === null ? "…" : Math.floor(run.percent) + "%"}`),
+          el("span", {class: "muted small"}, `${fmt(run.processed)} processed · ${fmt(run.matched)} matched`)),
+        progressBar(run),
+        el("div", {class: "stage", title: run.stage}, run.stage));
+    }
+    if (run) {
+      return el("td", {},
+        el("span", {class: "pill " + run.status}, run.status_label), " ",
+        el("span", {class: "muted small"}, `${ago(run.finished_at || run.started_at)} · ${fmt(run.matched)} matched`));
+    }
+    return el("td", {class: "muted"}, "No runs yet");
+  }
+
+  function actionCell(src) {
+    const run = src.run;
+    if (run && run.status === "running") {
+      return el("td", {}, el("a", {class: "btn primary", href: run.url}, "Watch live →"));
+    }
+    const form = el("form", {method: "post", action: src.start_url, style: "display:inline"},
+      el("input", {type: "hidden", name: "csrfmiddlewaretoken", value: token}),
+      el("button", {class: "btn primary", type: "submit"}, "▶ Run now"));
+    return el("td", {}, form, run ? el("a", {href: run.url, class: "small", style: "margin-left:10px"}, "last run") : null);
+  }
+
+  function renderSources(sources) {
+    const body = document.getElementById("sources");
+    if (!sources.length) {
+      body.replaceChildren(el("tr", {}, el("td", {colspan: 7, class: "muted"},
+        "No sources yet. Run “pipenv run python manage.py seed_dev” or add one in the admin.")));
+      return;
+    }
+    body.replaceChildren(...sources.map(src => el("tr", {},
+      el("td", {},
+        el("div", {class: "src-name"}, el("a", {href: src.admin_url}, src.name)),
+        el("div", {class: "src-url muted small mono", title: src.url}, src.url),
+        !src.is_active ? el("span", {class: "pill"}, "inactive") : null,
+        src.is_unavailable ? el("span", {class: "pill failed"}, "unavailable") : null),
+      el("td", {class: "small"}, src.content_type),
+      el("td", {class: "num"}, fmt(src.article_count)),
+      el("td", {class: "num"}, fmt(src.matched_count)),
+      el("td", {class: "small"}, ago(src.last_crawled_at)),
+      runCell(src),
+      actionCell(src))));
+  }
+
+  function renderRuns(runs) {
+    const body = document.getElementById("runs");
+    if (!runs.length) {
+      body.replaceChildren(el("tr", {}, el("td", {colspan: 9, class: "muted"}, "No runs yet.")));
+      return;
+    }
+    body.replaceChildren(...runs.map(run => el("tr", {},
+      el("td", {}, el("a", {href: run.url}, "#" + run.id)),
+      el("td", {}, run.source.name, " ", el("span", {class: "muted small"}, run.trigger)),
+      el("td", {}, el("span", {class: "pill " + run.status}, run.status_label)),
+      el("td", {class: "small"}, ago(run.started_at)),
+      el("td", {class: "small"}, duration(elapsed(run))),
+      el("td", {class: "num"}, fmt(run.processed)),
+      el("td", {class: "num"}, fmt(run.new)),
+      el("td", {class: "num"}, fmt(run.matched)),
+      el("td", {class: "num"}, fmt(run.errors)))));
+  }
+
+  async function refresh() {
+    try {
+      const res = await fetch("{% url 'crawler:dashboard-status' %}", {headers: {Accept: "application/json"}});
+      if (!res.ok) throw new Error(res.status);
+      const data = await res.json();
+      renderSources(data.sources);
+      renderRuns(data.runs);
+      document.getElementById("updated").textContent = "Updated " + new Date().toLocaleTimeString();
+      const busy = data.sources.some(s => s.run && s.run.status === "running");
+      setTimeout(refresh, busy ? 1500 : 5000);
+    } catch (e) {
+      document.getElementById("updated").textContent = "Connection lost — retrying…";
+      setTimeout(refresh, 5000);
+    }
+  }
+  refresh();
+</script>
+{% endblock %}

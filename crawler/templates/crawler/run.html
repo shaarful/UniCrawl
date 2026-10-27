@@ -1,0 +1,182 @@
+{% extends "crawler/base.html" %}
+{% block title %}Run #{{ run.pk }} · {{ run.source.name }}{% endblock %}
+{% block head %}
+<style>
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px;
+           margin-bottom: 20px; }
+  .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+          padding: 12px 14px; }
+  .stat .label { font-size: 12px; color: var(--muted); }
+  .stat .value { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat.matched .value { color: var(--warn); }
+  .stat.published .value { color: var(--ok); }
+  .stat.errors .value { color: var(--bad); }
+  .big-bar .bar { height: 14px; }
+  #stage { font-size: 15px; margin: 10px 0 2px; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
+  .feed { list-style: none; margin: 0; padding: 0; max-height: 520px; overflow-y: auto; }
+  .feed li { padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .feed li:last-child { border-bottom: 0; }
+  .feed .title { font-weight: 600; display: block; overflow: hidden; text-overflow: ellipsis;
+                 white-space: nowrap; }
+  .feed .meta { font-size: 12px; color: var(--muted); display: flex; gap: 8px; flex-wrap: wrap;
+                align-items: center; }
+  .feed li.new { animation: flash 1.5s ease-out; }
+  @keyframes flash { from { background: var(--accent-soft); } to { background: transparent; } }
+  .events { font-family: var(--mono); font-size: 12px; max-height: 260px; overflow-y: auto;
+            margin: 0; padding: 0; list-style: none; }
+  .events li { padding: 3px 0; white-space: pre-wrap; word-break: break-word; }
+  .events .error { color: var(--bad); }
+  .events .warning { color: var(--warn); }
+  .errbox { background: var(--bad-soft); color: var(--bad); border-radius: 8px; padding: 10px 14px;
+            margin-top: 12px; font-family: var(--mono); font-size: 12px; white-space: pre-wrap; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="row" style="margin-bottom:16px">
+  <div>
+    <div class="muted small"><a href="{% url 'crawler:dashboard' %}">← Dashboard</a></div>
+    <h1>{{ run.source.name }} <span class="muted" style="font-weight:400">· run #{{ run.pk }}</span></h1>
+    <div class="muted small mono">{{ run.source.url }}</div>
+  </div>
+  <div class="spacer"></div>
+  <span id="status-pill" class="pill"></span>
+  <form id="stop-form" method="post" action="{% url 'crawler:run-stop' run.pk %}" style="display:none">
+    {% csrf_token %}
+    <button class="btn danger" type="submit" id="stop-btn">■ Stop</button>
+  </form>
+  <form id="again-form" method="post" action="{% url 'crawler:start' run.source.pk %}" style="display:none">
+    {% csrf_token %}
+    <button class="btn primary" type="submit">▶ Run again</button>
+  </form>
+</div>
+
+<section class="panel big-bar">
+  <div class="row">
+    <strong id="percent" style="font-size:22px">…</strong>
+    <span class="spacer"></span>
+    <span class="muted small" id="timing"></span>
+  </div>
+  <div id="bar" style="margin-top:8px"></div>
+  <div id="stage"></div>
+  <div class="muted small" id="heartbeat"></div>
+  <div id="error"></div>
+</section>
+
+<div class="stats" id="stats"></div>
+
+<div class="cols">
+  <section class="panel">
+    <h2>Matched articles <span class="muted small" id="matched-count"></span></h2>
+    <ul class="feed" id="matched"><li class="muted">Nothing matched yet.</li></ul>
+  </section>
+  <section class="panel">
+    <h2>Latest articles</h2>
+    <ul class="feed" id="latest"><li class="muted">Waiting for articles…</li></ul>
+  </section>
+</div>
+
+<section class="panel">
+  <h2>Activity</h2>
+  <ul class="events" id="events"></ul>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const STATUS_URL = "{% url 'crawler:run-status' run.pk %}";
+  const seen = new Set();
+  let first = true;
+
+  const STATS = [
+    ["processed", "Processed"], ["new", "New stored"], ["matched", "Keyword matched"],
+    ["published", "Sent to LLM queue"], ["duplicates", "Duplicates"], ["errors", "Errors"],
+  ];
+  const BODY_SOURCE = {original_link: "full text (original page)", eios_fulltext: "full text (EIOS)",
+                       eios_snippet: "snippet only"};
+
+  function renderRun(run) {
+    const pill = document.getElementById("status-pill");
+    pill.className = "pill " + run.status;
+    pill.textContent = run.cancel_requested && run.status === "running" ? "Stopping…" : run.status_label;
+
+    const running = run.status === "running";
+    document.getElementById("stop-form").style.display = running ? "" : "none";
+    document.getElementById("stop-btn").disabled = run.cancel_requested;
+    document.getElementById("again-form").style.display = running ? "none" : "";
+
+    const pct = run.status === "succeeded" ? 100 : run.percent;
+    document.getElementById("percent").textContent = pct === null ? "Working…" : Math.floor(pct) + "%";
+    document.getElementById("bar").replaceChildren(progressBar(run));
+    document.getElementById("stage").textContent = run.stage;
+
+    const secs = elapsed(run);
+    const rate = secs > 0 ? run.processed / secs : 0;
+    let timing = `${running ? "Running" : "Took"} ${duration(secs)} · ${rate.toFixed(1)} articles/s`;
+    if (running && pct > 2 && pct < 100) {
+      timing += ` · about ${duration(secs * (100 - pct) / pct)} left`;
+    }
+    document.getElementById("timing").textContent = timing;
+    document.getElementById("heartbeat").textContent = running
+      ? `Last update ${ago(run.heartbeat_at)}` : `Started ${new Date(run.started_at).toLocaleString()} (${run.trigger})`;
+    document.getElementById("error").replaceChildren(run.error ? el("div", {class: "errbox"}, run.error) : "");
+
+    document.getElementById("stats").replaceChildren(...STATS.map(([key, label]) =>
+      el("div", {class: "stat " + key}, el("div", {class: "label"}, label),
+         el("div", {class: "value"}, fmt(run[key])))));
+    document.getElementById("matched-count").textContent = run.matched ? `(${fmt(run.matched)})` : "";
+
+    document.getElementById("events").replaceChildren(...run.events.slice().reverse().map(e =>
+      el("li", {class: e.level}, `${new Date(e.t).toLocaleTimeString()}  ${e.msg}`)));
+  }
+
+  function articleItem(a, showSnippetInfo) {
+    const isNew = !first && !seen.has(a.id);
+    seen.add(a.id);
+    return el("li", {class: isNew ? "new" : null},
+      el("a", {class: "title", href: a.url, target: "_blank", rel: "noopener", title: a.title || a.url},
+         a.title || a.url),
+      el("div", {class: "meta"},
+        el("span", {class: "pill " + a.status}, a.status),
+        a.diseases.map(d => el("span", {class: "pill matched"}, d)),
+        a.language ? el("span", {}, a.language) : null,
+        showSnippetInfo && a.body_source ? el("span", {}, BODY_SOURCE[a.body_source] || a.body_source) : null,
+        el("span", {}, fmt(a.body_chars) + " chars"),
+        el("a", {href: a.admin_url}, "details")));
+  }
+
+  function renderFeed(id, articles, emptyText, showSnippetInfo) {
+    const list = document.getElementById(id);
+    list.replaceChildren(...(articles.length
+      ? articles.map(a => articleItem(a, showSnippetInfo))
+      : [el("li", {class: "muted"}, emptyText)]));
+  }
+
+  async function refresh() {
+    let running = true;
+    try {
+      const res = await fetch(STATUS_URL, {headers: {Accept: "application/json"}});
+      if (!res.ok) throw new Error(res.status);
+      const data = await res.json();
+      running = data.run.status === "running";
+      renderRun(data.run);
+      renderFeed("matched", data.matched, "Nothing matched yet.", true);
+      renderFeed("latest", data.latest, running ? "Waiting for articles…" : "No new articles in this run.", false);
+      first = false;
+    } catch (e) {
+      document.getElementById("heartbeat").textContent = "Connection lost — retrying…";
+    }
+    if (running) setTimeout(refresh, 1000);
+  }
+
+  document.getElementById("stop-form").addEventListener("submit", async ev => {
+    ev.preventDefault();
+    document.getElementById("stop-btn").disabled = true;
+    await fetch(ev.target.action, {method: "POST", headers: {"X-CSRFToken": ev.target.csrfmiddlewaretoken.value,
+                                                           Accept: "application/json"}});
+  });
+
+  refresh();
+</script>
+{% endblock %}
