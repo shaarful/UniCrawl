@@ -9,6 +9,7 @@ import pytest
 from django.core.exceptions import ImproperlyConfigured
 from google.auth.exceptions import RefreshError
 from google.genai import errors
+from pydantic import ValidationError
 
 from llm.gemini import (
     ArticleError,
@@ -52,6 +53,7 @@ def test_extract_returns_events_and_usage(extractor):
     parsed = Extraction(
         is_disease_event=True,
         events=[Event(disease="anthrax", country="Bangladesh", number_of_cases=12)],
+        summary="Twelve anthrax cases.",
     )
     extractor.generate.return_value = _response(parsed, text='{"is_disease_event": true}')
 
@@ -64,7 +66,7 @@ def test_extract_returns_events_and_usage(extractor):
 
 
 def test_extract_requires_schema_output_at_zero_temperature(extractor):
-    extractor.generate.return_value = _response(Extraction(is_disease_event=False))
+    extractor.generate.return_value = _response(Extraction(is_disease_event=False, summary="x"))
 
     extractor.extract("Title", "Body")
 
@@ -75,7 +77,9 @@ def test_extract_requires_schema_output_at_zero_temperature(extractor):
 
 
 def test_non_event_cannot_keep_events(extractor):
-    parsed = Extraction(is_disease_event=False, events=[Event(disease="cyclone")])
+    parsed = Extraction(
+        is_disease_event=False, events=[Event(disease="cyclone")], summary="About a cyclone.",
+    )
     extractor.generate.return_value = _response(parsed)
 
     assert extractor.extract("Title", "Body").extraction.events == []
@@ -85,6 +89,7 @@ def test_events_without_a_disease_are_dropped(extractor):
     parsed = Extraction(
         is_disease_event=True,
         events=[Event(disease="  "), Event(disease="rabies")],
+        summary="Rabies cases.",
     )
     extractor.generate.return_value = _response(parsed)
 
@@ -95,7 +100,7 @@ def test_events_without_a_disease_are_dropped(extractor):
 
 def test_long_body_is_truncated_and_flagged(extractor, settings):
     settings.LLM_MAX_INPUT_CHARS = 5
-    extractor.generate.return_value = _response(Extraction(is_disease_event=False))
+    extractor.generate.return_value = _response(Extraction(is_disease_event=False, summary="x"))
 
     result = extractor.extract("Title", "1234567890")
 
@@ -137,6 +142,56 @@ def test_outages_are_service_errors(extractor, exc):
 
     with pytest.raises(ServiceError):
         extractor.extract("Title", "Body")
+
+
+def test_slow_response_is_an_article_error_so_it_cannot_repeat_forever(extractor):
+    extractor.generate.side_effect = httpx.ReadTimeout("too slow")
+
+    with pytest.raises(ArticleError):
+        extractor.extract("Title", "Body")
+
+
+def test_summary_is_returned(extractor):
+    extractor.generate.return_value = _response(
+        Extraction(is_disease_event=False, summary="About sport."),
+    )
+
+    assert extractor.extract("Title", "Body").extraction.summary == "About sport."
+
+
+def test_summary_is_required_by_the_schema():
+    with pytest.raises(ValidationError):
+        Extraction(is_disease_event=False)
+
+
+def test_blank_summary_is_an_article_error(extractor):
+    extractor.generate.return_value = _response(
+        Extraction(is_disease_event=False, summary="  "),
+    )
+
+    with pytest.raises(ArticleError):
+        extractor.extract("Title", "Body")
+
+
+def test_prompt_asks_for_a_grounded_summary_of_the_required_length(extractor):
+    extractor.generate.return_value = _response(Extraction(is_disease_event=False, summary="x"))
+
+    extractor.extract("Title", "Body")
+
+    instruction = extractor.generate.call_args.kwargs["config"].system_instruction
+    assert "100 to 200 words" in instruction
+    assert "Use only facts stated in the" in instruction
+    assert "Never add background" in instruction
+
+
+def test_prompt_asks_for_a_full_english_translation(extractor):
+    extractor.generate.return_value = _response(Extraction(is_disease_event=False, summary="x"))
+
+    extractor.extract("Title", "Body")
+
+    instruction = extractor.generate.call_args.kwargs["config"].system_instruction
+    assert "translated_body" in instruction
+    assert "Do not summarize" in instruction
 
 
 def test_unexpected_errors_are_not_hidden(extractor):

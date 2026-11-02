@@ -170,34 +170,37 @@
         bodyInfo(a),
         el("span", {}, fmt(a.body_chars) + " chars"),
         el("a", {href: a.admin_url}, "details"),
-        refetchButton(a)));
+        actionButton(a, a.refetch_url, "↻ refetch", "refetching…", "refetch",
+                     "Fetch the original link again and update the stored text"),
+        actionButton(a, a.llm_url, "✦ process with LLM", "processing…", "LLM processing",
+                     "Send the stored text to the LLM now and replace any earlier result")));
   }
 
-  function refetchButton(a) {
-    const btn = el("button", {type: "button", class: "linkbtn",
-                              title: "Fetch the original link again and update the stored text"},
-                   "↻ refetch");
-    btn.addEventListener("click", () => refetch(a, btn));
+  function actionButton(a, url, label, busyLabel, actionName, title) {
+    const btn = el("button", {type: "button", class: "linkbtn", title}, label);
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      btn.textContent = busyLabel;
+      await runAction(a, url, actionName);
+      if (!polling) refresh();  // a running crawl re-renders on its next poll
+      else { btn.disabled = false; btn.textContent = label; }
+    });
     return btn;
   }
 
-  async function refetch(a, btn) {
-    btn.disabled = true;
-    btn.textContent = "refetching…";
+  async function runAction(a, url, actionName) {
     const notice = document.getElementById("notice");
     try {
-      const res = await fetch(a.refetch_url, {method: "POST",
-                                              headers: {"X-CSRFToken": csrf(), Accept: "application/json"}});
+      const res = await fetch(url, {method: "POST",
+                                    headers: {"X-CSRFToken": csrf(), Accept: "application/json"}});
       if (!res.ok) throw new Error("HTTP " + res.status);
       const data = await res.json();
       notice.className = data.ok ? "" : "warning";
       notice.textContent = `${a.title || a.url}: ${data.message}`;
     } catch (e) {
       notice.className = "warning";
-      notice.textContent = `${a.title || a.url}: refetch failed (${e.message}).`;
+      notice.textContent = `${a.title || a.url}: ${actionName} failed (${e.message}).`;
     }
-    if (!polling) refresh();  // a running crawl re-renders on its next poll
-    else { btn.disabled = false; btn.textContent = "↻ refetch"; }
   }
 
   function renderFeed(id, articles, emptyText) {

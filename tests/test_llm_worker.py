@@ -66,6 +66,7 @@ def _result(*diseases, is_event=True):
                 Event(disease=d, country="Bangladesh", location="Sirajganj", number_of_cases=12)
                 for d in diseases
             ],
+            summary="  Summary of the article.  ",
         ),
         prompt_tokens=11,
         response_tokens=7,
@@ -124,6 +125,27 @@ def test_message_is_not_acked_if_saving_fails(article):
     assert not worker.client.pipeline.called
 
 
+def test_summary_is_stored(article):
+    worker = _worker(extract=[_result("anthrax")])
+
+    worker._handle("1-0", _fields(article))
+
+    assert ArticleExtraction.objects.get(article=article).summary == "Summary of the article."
+
+
+def test_translation_is_stored(article):
+    result = _result("anthrax")
+    result.extraction.translated_title = "English title"
+    result.extraction.translated_body = "English body"
+    worker = _worker(extract=[result])
+
+    worker._handle("1-0", _fields(article))
+
+    extraction = ArticleExtraction.objects.get(article=article)
+    assert extraction.translated_title == "English title"
+    assert extraction.translated_body == "English body"
+
+
 def test_disease_names_are_stored_lowercase(article):
     worker = _worker(extract=[_result(" Rift Valley Fever ")])
 
@@ -170,7 +192,7 @@ def test_new_prompt_version_extracts_again(article):
     worker = _worker(extract=[_result("anthrax"), _result("anthrax")])
 
     worker._handle("1-0", _fields(article))
-    with patch("llm.worker.PROMPT_VERSION", "next"):
+    with patch("llm.services.PROMPT_VERSION", "next"):
         worker._handle("2-0", _fields(article))
 
     assert worker.extractor.extract.call_count == 2

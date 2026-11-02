@@ -126,9 +126,9 @@ RZDO_GCP_PROJECT = env("RZDO_GCP_PROJECT", default="")
 RZDO_GCP_CREDENTIALS = env("RZDO_GCP_CREDENTIALS", default="")
 LLM_MAX_ATTEMPTS = env.int("LLM_MAX_ATTEMPTS", default=3)
 LLM_MAX_INPUT_CHARS = env.int("LLM_MAX_INPUT_CHARS", default=50_000)
-LLM_REQUEST_TIMEOUT_SECONDS = env.int("LLM_REQUEST_TIMEOUT_SECONDS", default=120)
+LLM_REQUEST_TIMEOUT_SECONDS = env.int("LLM_REQUEST_TIMEOUT_SECONDS", default=300)
 # Must stay above the request timeout, or a message still in progress can be reclaimed.
-LLM_CLAIM_IDLE_SECONDS = env.int("LLM_CLAIM_IDLE_SECONDS", default=300)
+LLM_CLAIM_IDLE_SECONDS = env.int("LLM_CLAIM_IDLE_SECONDS", default=600)
 
 EIOS_API_BASE_URL = env("EIOS_API_BASE_URL", default="")
 EIOS_API_VERSION = env("EIOS_API_VERSION", default="1.0")

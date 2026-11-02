@@ -13,7 +13,7 @@ from google.oauth2 import service_account
 from pydantic import BaseModel, Field
 
 # Bump when the prompt or schema changes: a re-sent article is then re-extracted.
-PROMPT_VERSION = "1"
+PROMPT_VERSION = "3"
 
 SYSTEM_INSTRUCTION = """\
 You extract structured records from news articles for a zoonotic disease early
@@ -34,7 +34,19 @@ Return one event per distinct combination of disease, country and location:
   stated. Use the stated minimum for phrases like "more than 12". Do not count
   deaths alone, people at risk, people vaccinated or people otherwise affected.
 
-Write every value in English, whatever the language of the article.
+Always write summary: a plain-language English summary of 100 to 200 words. Highlight
+the disease, location, case count and severity where the article states them. If it
+reports no disease event, summarize what it is about. Use only facts stated in the
+article. Never add background, explanation, interpretation or implications, even if
+they are true. The length limit never justifies adding anything: if the article is too
+short for 100 words, write less, so a one-sentence article gets a one-sentence summary.
+
+If the article is not in English, set translated_title and translated_body to a
+complete and faithful English translation of the title and body, whether or not it
+reports a disease event. Do not summarize or omit anything. If the article is
+already in English, set both to null.
+
+Write every other value in English too, whatever the language of the article.
 """
 
 
@@ -48,6 +60,9 @@ class Event(BaseModel):
 class Extraction(BaseModel):
     is_disease_event: bool
     events: list[Event] = Field(default_factory=list)
+    summary: str  # FR-16
+    translated_title: str | None = None
+    translated_body: str | None = None
 
 
 class ArticleError(Exception):
@@ -119,6 +134,10 @@ class GeminiExtractor:
             if exc.code == 400:
                 raise ArticleError(str(exc)) from exc
             raise ServiceError(str(exc)) from exc
+        except httpx.ReadTimeout as exc:
+            # The connection worked but the answer took too long, as a very long
+            # translation can. Limited retries, or this article would repeat forever.
+            raise ArticleError(f"Timed out waiting for the response: {exc}") from exc
         except (httpx.TransportError, GoogleAuthError, OSError) as exc:
             raise ServiceError(f"{type(exc).__name__}: {exc}") from exc
 
@@ -126,6 +145,8 @@ class GeminiExtractor:
         if not isinstance(extraction, Extraction):
             # Safety block, cut-off output, or JSON that does not fit the schema.
             raise ArticleError(f"No valid extraction in response: {response.text!r}"[:500])
+        if not extraction.summary.strip():
+            raise ArticleError("Response has an empty summary")
 
         extraction.events = (
             [event for event in extraction.events if event.disease.strip()]

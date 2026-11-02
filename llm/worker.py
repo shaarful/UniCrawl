@@ -17,7 +17,6 @@ group is the only reader of the stream.
 """
 from __future__ import annotations
 
-import hashlib
 import os
 import socket
 import time
@@ -28,8 +27,9 @@ import structlog
 from django.conf import settings
 from django.db import InterfaceError, OperationalError, close_old_connections, transaction
 
-from llm.gemini import PROMPT_VERSION, ArticleError, ExtractionResult, ServiceError
-from llm.models import ArticleExtraction, ExtractedEvent
+from llm.gemini import ArticleError, ServiceError
+from llm.models import ArticleExtraction
+from llm.services import compute_input_hash, save_extraction
 from raw_content.models import RawArticle
 
 log = structlog.get_logger(__name__)
@@ -137,9 +137,7 @@ class ExtractionWorker:
             self._dead_letter(message_id, fields, f"article {article_id} not found")
             return
 
-        input_hash = hashlib.sha256(
-            "\0".join((self.extractor.model, PROMPT_VERSION, title, body)).encode()
-        ).hexdigest()
+        input_hash = compute_input_hash(self.extractor.model, title, body)
         current = ArticleExtraction.objects.filter(article_id=article_id).first()
         if current is not None and self._already_superseded(current, input_hash, message_id):
             log.info("llm.skipped", article_id=article_id, msg_id=message_id)
@@ -153,7 +151,13 @@ class ExtractionWorker:
             self._on_article_error(message_id, fields, article_id, input_hash, exc)
             return
 
-        self._save(article_id, message_id, input_hash, result)
+        save_extraction(
+            article_id,
+            message_id=message_id,
+            input_hash=input_hash,
+            model=self.extractor.model,
+            result=result,
+        )
         self._finish(message_id)
         log.info(
             "llm.extracted",
@@ -175,40 +179,6 @@ class ExtractionWorker:
         return current.input_hash == input_hash or (
             _stream_position(current.stream_message_id) > _stream_position(message_id)
         )
-
-    def _save(
-        self, article_id: int, message_id: str, input_hash: str, result: ExtractionResult,
-    ) -> None:
-        with transaction.atomic():
-            extraction, _ = ArticleExtraction.objects.update_or_create(
-                article_id=article_id,
-                defaults={
-                    "status": ArticleExtraction.Status.COMPLETED,
-                    "is_disease_event": result.extraction.is_disease_event,
-                    "input_hash": input_hash,
-                    "stream_message_id": message_id,
-                    "attempts": 0,
-                    "error": "",
-                    "llm_model": self.extractor.model,
-                    "prompt_version": PROMPT_VERSION,
-                    "prompt_tokens": result.prompt_tokens,
-                    "response_tokens": result.response_tokens,
-                    "input_truncated": result.input_truncated,
-                    "raw_response": result.raw_response,
-                },
-            )
-            extraction.events.all().delete()
-            ExtractedEvent.objects.bulk_create(
-                ExtractedEvent(
-                    extraction=extraction,
-                    # Lowercase so one disease is not counted under two spellings.
-                    disease=event.disease.strip().lower()[:255],
-                    country=(event.country or "").strip()[:255],
-                    location=(event.location or "").strip()[:255],
-                    number_of_cases=event.number_of_cases,
-                )
-                for event in result.extraction.events
-            )
 
     def _on_article_error(
         self, message_id: str, fields: dict, article_id: int, input_hash: str, exc: ArticleError,

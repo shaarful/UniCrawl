@@ -9,6 +9,7 @@ from django.views.generic import RedirectView
 urlpatterns = [
     path("", RedirectView.as_view(pattern_name="crawler:dashboard", permanent=False)),
     path("crawl/", include("crawler.urls")),
+    path("llm/", include("llm.urls")),
     path("admin/", admin.site.urls),
     path("health/", include("health.urls")),
     path("api/v1/sources/", include("sources.urls")),

@@ -71,6 +71,7 @@ def _article_json(article: RawArticle) -> dict:
         "body_chars": len(article.body),
         "admin_url": reverse("admin:raw_content_rawarticle_change", args=[article.pk]),
         "refetch_url": reverse("crawler:article-refetch", args=[article.pk]),
+        "llm_url": reverse("llm:article-process", args=[article.pk]),
     }
 
 

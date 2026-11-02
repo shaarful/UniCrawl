@@ -242,7 +242,11 @@ A `redis.RedisError` propagates unchanged so the pipeline leaves the article in 
 
 ### 9. LLM Extraction Worker (`llm/`)
 
-`manage.py run_llm_worker` reads the stream above as the consumer group `LLM_CONSUMER_GROUP`, sends each article to Gemini on Vertex AI (`llm/gemini.py`) and stores the result as an `ArticleExtraction` with one `ExtractedEvent` per disease and place. Results are visible in the Django admin. An article that reports no disease occurrence is stored with `is_disease_event=False` and no events.
+`manage.py run_llm_worker` reads the stream above as the consumer group `LLM_CONSUMER_GROUP`, sends each article to Gemini on Vertex AI (`llm/gemini.py`) and stores the result as an `ArticleExtraction` with one `ExtractedEvent` per disease and place. Results are visible in the Django admin. An article that reports no disease occurrence is stored with `is_disease_event=False` and no events. Every processed article gets a 100–200 word English `summary` (FR-16), or less if the article is too short. Non-English articles also get a full English translation in `translated_title` and `translated_body`, whether or not they are relevant, so a reviewer can check the decision. Translation output is roughly as long as the article, so it adds to the token cost.
+
+**From the admin:**
+- **Process with LLM** (article page and run page): sends the stored text to Gemini immediately, without Redis or the worker, and replaces any earlier result. To use the page's latest text, click **Refetch** first.
+- **Send selected matched articles to the LLM queue** (article list action): for articles stuck as `matched`, for example after Redis was down. Needs Redis, and the worker to process them. Duplicates and unmatched articles are skipped.
 
 The dependency is one-way: `llm` reads `raw_content`, and nothing in the crawler imports `llm`. The two communicate only through the stream, so crawling continues if the worker is down, and articles wait in the stream until it returns.
 
@@ -251,7 +255,7 @@ The dependency is one-way: `llm` reads `raw_content`, and nothing in the crawler
 | Failure | What happens |
 |---|---|
 | Malformed message, or its article no longer exists | Moved straight to the dead-letter stream |
-| Article-specific (HTTP 400, or no valid output, e.g. a safety block) | Retried after `LLM_CLAIM_IDLE_SECONDS`; moved to the dead-letter stream after `LLM_MAX_ATTEMPTS` |
+| Article-specific (HTTP 400, no valid output such as a safety block, or a response timeout) | Retried after `LLM_CLAIM_IDLE_SECONDS`; moved to the dead-letter stream after `LLM_MAX_ATTEMPTS` |
 | Outage (Gemini 401/403/404/429/5xx, network, credentials, Redis, database) | The worker backs off from 5 s up to 5 min. Nothing counts against the article, so an outage cannot empty the queue |
 | Worker crash mid-article | The unfinished message is reclaimed after `LLM_CLAIM_IDLE_SECONDS` |
 
@@ -412,6 +416,8 @@ ArticleExtraction
 ├── article            OneToOneField(RawArticle)
 ├── status             CharField — retrying | completed | failed
 ├── is_disease_event   BooleanField (null until completed)
+├── summary            TextField — English, 100–200 words (FR-16)
+├── translated_title, translated_body   TextField — English; blank if already English
 ├── input_hash         CharField(64) — model + prompt version + article text
 ├── stream_message_id  CharField(32) — message that produced the stored events
 ├── attempts, error    article-specific failures for this input
@@ -470,8 +476,8 @@ All settings are environment-variable-driven via `django-environ`. Copy `.env.ex
 | `LLM_GCP_LOCATION` | `global` | Vertex AI location |
 | `LLM_MAX_ATTEMPTS` | `3` | Article-specific failures before dead-lettering |
 | `LLM_MAX_INPUT_CHARS` | `50000` | Longer bodies are truncated before being sent to the model |
-| `LLM_REQUEST_TIMEOUT_SECONDS` | `120` | Timeout of one Gemini request |
-| `LLM_CLAIM_IDLE_SECONDS` | `300` | Wait before retrying an unfinished message; keep above the request timeout |
+| `LLM_REQUEST_TIMEOUT_SECONDS` | `300` | Timeout of one Gemini request |
+| `LLM_CLAIM_IDLE_SECONDS` | `600` | Wait before retrying an unfinished message; keep above the request timeout |
 | `CRAWLER_DEFAULT_INTERVAL_SECONDS` | `3600` | Default per-source crawl interval |
 | `CRAWLER_RETRY_BACKOFF_MINUTES` | `1,4,16` | FR-14 retry intervals (comma-separated) |
 | `CRAWLER_SEMANTIC_DEDUP_ENABLED` | `False` | Enable Layer 3 semantic dedup (requires sentence-transformers + ~2 GB PyTorch) |
@@ -695,6 +701,7 @@ pipenv run pytest --cov=crawler --cov=sources --cov=raw_content
 | `test_semantic_dedup.py` | Cosine math, embedding computation, DB duplicate detection, pipeline integration |
 | `test_llm_gemini.py` | Gemini response mapping, schema config, truncation, article-error vs. outage classification |
 | `test_llm_worker.py` | Storing results, redelivery, retries, dead-lettering, outage back-off, consumer group recovery |
+| `test_llm_admin.py` | Process with LLM button, result display, failure handling, bulk send to the queue |
 
 ---
 

@@ -1,0 +1,14 @@
+{% extends "admin/raw_content/rawarticle/change_form.html" %}
+
+{% block object-tools-items %}
+  <li>
+    <form method="post" action="{% url 'llm:article-process' original.pk %}"
+          onsubmit="this.querySelector('button').disabled = true; this.querySelector('button').textContent = 'Processing…';">
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+      <button type="submit" class="refetchlink"
+              title="Send the stored text to the LLM now and replace any earlier result">✦ Process with LLM</button>
+    </form>
+  </li>
+  {{ block.super }}
+{% endblock %}

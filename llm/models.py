@@ -32,6 +32,19 @@ class ArticleExtraction(models.Model):
         help_text="False when the article reports no disease occurrence; "
                   "empty until an extraction has completed.",
     )
+    summary = models.TextField(
+        blank=True,
+        help_text="English summary of the article, 100-200 words (FR-16); "
+                  "empty until an extraction has completed.",
+    )
+    translated_title = models.TextField(
+        blank=True,
+        help_text="English translation; empty when the article is already in English.",
+    )
+    translated_body = models.TextField(
+        blank=True,
+        help_text="English translation; empty when the article is already in English.",
+    )
 
     # --- Redelivery handling ---
     input_hash = models.CharField(
@@ -41,7 +54,8 @@ class ArticleExtraction(models.Model):
     stream_message_id = models.CharField(
         max_length=32,
         blank=True,
-        help_text="Redis message that produced the stored events.",
+        help_text="Redis message that produced the stored events, or the same "
+                  "time-based form when processed from the admin button.",
     )
     attempts = models.PositiveSmallIntegerField(
         default=0,
