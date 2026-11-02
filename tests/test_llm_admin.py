@@ -239,6 +239,76 @@ def test_run_page_articles_include_the_llm_url():
     assert _article_json(article)["llm_url"] == _process_url(article)
 
 
+# --- Article list -----------------------------------------------------------------
+
+def _list_page(admin_client, **params):
+    return admin_client.get(reverse("admin:raw_content_rawarticle_changelist"), params)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "status, label",
+    [
+        (None, "Not processed"),
+        (ArticleExtraction.Status.RETRYING, "Retrying"),
+        (ArticleExtraction.Status.COMPLETED, "Completed"),
+        (ArticleExtraction.Status.FAILED, "Failed (dead-lettered)"),
+    ],
+    ids=["none", "retrying", "completed", "failed"],
+)
+def test_article_list_shows_the_llm_status(admin_client, status, label):
+    article = _article()
+    if status:
+        ArticleExtraction.objects.create(article=article, status=status, input_hash="h")
+
+    html = _list_page(admin_client).content.decode()
+
+    assert "LLM status" in html
+    assert f'<td class="field-llm_status">{label}</td>' in html
+
+
+@pytest.mark.django_db
+def test_article_list_shows_20_per_page(admin_client):
+    for n in range(21):
+        _article(n)
+
+    response = _list_page(admin_client)
+
+    assert len(response.context["cl"].result_list) == 20
+    assert response.context["cl"].paginator.num_pages == 2
+
+
+@pytest.mark.django_db
+def test_article_list_can_sort_by_llm_status(admin_client):
+    done = _article(1)
+    ArticleExtraction.objects.create(
+        article=done, status=ArticleExtraction.Status.COMPLETED, input_hash="h",
+    )
+    failed = _article(2)
+    ArticleExtraction.objects.create(
+        article=failed, status=ArticleExtraction.Status.FAILED, input_hash="h",
+    )
+    column = list(_list_page(admin_client).context["cl"].list_display).index("llm_status")
+
+    response = _list_page(admin_client, o=str(column))
+
+    assert [a.pk for a in response.context["cl"].result_list] == [done.pk, failed.pk]
+
+
+@pytest.mark.django_db
+def test_article_list_status_does_not_add_a_query_per_article(
+    admin_client, django_assert_max_num_queries,
+):
+    for n in range(20):
+        article = _article(n)
+        ArticleExtraction.objects.create(
+            article=article, status=ArticleExtraction.Status.COMPLETED, input_hash="h",
+        )
+
+    with django_assert_max_num_queries(15):
+        _list_page(admin_client)
+
+
 # --- Bulk action ------------------------------------------------------------------
 
 def _bulk(admin_client, articles, **publish):

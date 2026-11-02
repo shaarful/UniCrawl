@@ -16,6 +16,7 @@ MAX_BULK_REFETCH = 100
 @admin.register(RawArticle)
 class RawArticleAdmin(admin.ModelAdmin):
     actions = ["refetch_from_original_link"]
+    list_per_page = 20
     list_display = (
         "id", "source", "source_name", "processing_status", "is_keyword_matched",
         "is_duplicate", "language", "body_source", "published_at", "fetched_at",

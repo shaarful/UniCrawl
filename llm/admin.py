@@ -44,6 +44,13 @@ class RawArticleLlmAdmin(RawArticleAdmin):
     change_form_template = "admin/llm/rawarticle_change_form.html"
     inlines = [*RawArticleAdmin.inlines, ArticleExtractionInline]
     actions = [*RawArticleAdmin.actions, "send_to_llm_queue"]
+    list_display = [*RawArticleAdmin.list_display, "llm_status"]
+    list_select_related = ("source", "extraction")
+
+    @admin.display(description="LLM status", ordering="extraction__status")
+    def llm_status(self, obj: RawArticle) -> str:
+        extraction = getattr(obj, "extraction", None)  # articles not processed yet have none
+        return extraction.get_status_display() if extraction else "Not processed"
 
     @admin.action(description="Send selected matched articles to the LLM queue")
     def send_to_llm_queue(self, request, queryset):
