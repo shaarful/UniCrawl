@@ -1,6 +1,6 @@
 # UniCrawl — Universal Web Crawler Service
 
-UniCrawl is the autonomous ingestion component of the **Regional Zoonotic Disease Observatory and Early Warning System (RZDO-EWS)**. It crawls administrator-configured open-source URLs — news portals, RSS feeds, government health bulletins, and social-media APIs — filters content against an active disease keyword list, and hands matched articles to a downstream LLM extraction pipeline within 60 seconds.
+UniCrawl is the autonomous ingestion component of the **Regional Zoonotic Disease Observatory and Early Warning System (RZDO-EWS)**. It crawls administrator-configured open-source URLs — news portals, RSS feeds, and government health bulletins — filters content against an active disease keyword list, and hands matched articles to a downstream LLM extraction pipeline within 60 seconds.
 
 This service covers **FR-07 through FR-14** of the RZDO-EWS SRS (v1.5), plus LLM extraction in the `llm` app, which runs as its own worker process. All other microservices (validation/moderation, analytics, dashboard) are out of scope here.
 
@@ -67,7 +67,7 @@ The **Source** model is the master list of all URLs the crawler ingests. Adminis
 | Field | Purpose |
 |---|---|
 | `url` | The target URL to crawl |
-| `content_type` | `html`, `rss`, `eios`, or `social` — determines which fetcher is used |
+| `content_type` | `html`, `rss`, or `eios` — determines which fetcher is used |
 | `crawl_interval_seconds` | How often to crawl this source (default: 3600 s) |
 | `crawl_depth` | Link-follow depth; 1 = landing page only |
 | `keyword_filter_overrides` | Per-source disease keyword list; `null` = use global list |
@@ -109,7 +109,6 @@ Each fetcher implements the `Fetcher` protocol: `fetch(url) → FetchResult`.
 | `fetchers/html.py` | `HTMLFetcher` | News portals, government bulletins |
 | `fetchers/rss.py` | `RSSFetcher` | RSS / Atom feeds |
 | `fetchers/eios.py` | `EIOSFetcher` | WHO-EIOS authenticated feed (FR-07) — OAuth2 client credentials, time-windowed board paging |
-| `fetchers/social.py` | `SocialFetcher` | Social-media APIs — *stub* |
 
 `HTMLFetcher` and `RSSFetcher` share `HttpFetcher` (`fetchers/base.py`), which uses **httpx** with:
 - A `UniCrawl/0.1` User-Agent
@@ -234,7 +233,7 @@ Appends keyword-matched articles to a **Redis Stream** (`LLM_QUEUE_NAME`, defaul
 | `published_at` | ISO-8601 publication / reporting date stated by the source, `""` if unknown |
 | `author` | Reporter / author byline from page or feed metadata, `""` if none |
 | `source_name` | Publisher (EIOS source name, feed `<source>`, else the configured source name) |
-| `source_type` | `html` / `rss` / `social`, or the EIOS publisher type (`webnews`, `wire`, `socialmedia-…`) |
+| `source_type` | `html` / `rss`, or the EIOS publisher type (`webnews`, `wire`, `socialmedia-…`) |
 | `fetched_at` | ISO-8601 timestamp of the crawl |
 | `queued_at` | ISO-8601 timestamp of the stream publish |
 
@@ -356,7 +355,7 @@ run_for_source(source_id)
 Source
 ├── name                        CharField (unique)
 ├── url                         URLField (unique)
-├── content_type                html | rss | eios | social
+├── content_type                html | rss | eios
 ├── language_hint               BCP-47, blank = auto-detect
 ├── crawl_interval_seconds      PositiveIntegerField, default 3600
 ├── crawl_depth                 PositiveSmallIntegerField, default 1
@@ -724,7 +723,3 @@ These items from SRS §7.3 are deliberately unresolved upstream and must be answ
 | **TBD-02** | **Resolved** | Disease list stored in `DiseaseKeyword` DB table, managed via Django admin / DRF API |
 | **TBD-03** | Open | Final extraction-field list for the LLM service (affects publisher payload schema) |
 | **TBD-04** | Open | LLM deployment option — in-house fine-tuned model vs. third-party API (affects queue payload) |
-
-**Stub components** (raise `NotImplementedError`; the pipeline handles each gracefully without crashing):
-
-- `crawler/fetchers/social.py` — `SocialFetcher.fetch()` — per-platform implementations pending

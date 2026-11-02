@@ -41,13 +41,11 @@ def _fetcher_for(source: Source):
     from crawler.fetchers.eios import EIOSFetcher
     from crawler.fetchers.html import HTMLFetcher
     from crawler.fetchers.rss import RSSFetcher
-    from crawler.fetchers.social import SocialFetcher
 
     return {
         Source.ContentType.HTML: HTMLFetcher,
         Source.ContentType.RSS: RSSFetcher,
         Source.ContentType.EIOS: EIOSFetcher,
-        Source.ContentType.SOCIAL: SocialFetcher,
     }[source.content_type]()
 
 

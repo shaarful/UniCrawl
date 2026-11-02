@@ -22,7 +22,6 @@ MODULES = [
     "crawler.fetchers.html",
     "crawler.fetchers.rss",
     "crawler.fetchers.eios",
-    "crawler.fetchers.social",
     "crawler.filters.keyword",
     "crawler.dedup.url_fingerprint",
     "crawler.dedup.content_hash",

@@ -95,7 +95,7 @@ class RawArticle(models.Model):
     source_type = models.CharField(
         max_length=64,
         blank=True,
-        help_text="Channel type: the source's content type (html, rss, social) "
+        help_text="Channel type: the source's content type (html, rss) "
                   "or, for EIOS, the publisher type (webnews, wire, socialmedia-…).",
     )
 

@@ -20,7 +20,6 @@ class Source(models.Model):
         HTML = "html", "News / HTML bulletin"
         RSS = "rss", "RSS / Atom feed"
         EIOS = "eios", "WHO-EIOS authenticated feed"
-        SOCIAL = "social", "Social media API"
 
     # --- Identity ---
     name = models.CharField(max_length=255, unique=True)

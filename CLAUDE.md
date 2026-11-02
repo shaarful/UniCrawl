@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-UniCrawl is the **universal web crawler** component of the **Regional Zoonotic Disease Observatory and Early Warning System (RZDO-EWS)** described in `srs/RZDO_EWS_SRS_v1.5.docx`. It autonomously collects disease-related content from administrator-defined open-source URLs (news portals, RSS feeds, government health bulletins, social media APIs) and forwards keyword-matched content to a downstream LLM extraction pipeline.
+UniCrawl is the **universal web crawler** component of the **Regional Zoonotic Disease Observatory and Early Warning System (RZDO-EWS)** described in `srs/RZDO_EWS_SRS_v1.5.docx`. It autonomously collects disease-related content from administrator-defined open-source URLs (news portals, RSS feeds, government health bulletins) and forwards keyword-matched content to a downstream LLM extraction pipeline.
 
 The Crawler Service is one of five microservices in the broader RZDO-EWS architecture. **In scope here are the crawler and LLM extraction** — validation/moderation, analytics, and the dashboard are separate services and not implemented in this repo.
 
@@ -16,7 +16,7 @@ The SRS is the authoritative requirements document. Read it (`srs/RZDO_EWS_SRS_v
 
 What the crawler must do (per SRS §3.2):
 
-- **Source-agnostic ingestion (FR-08):** Pull from any administrator-configured URL, auto-detecting whether it's a news portal, RSS feed, bulletin, or social API.
+- **Source-agnostic ingestion (FR-08):** Pull from any administrator-configured URL, auto-detecting whether it's a news portal, RSS feed, or bulletin.
 - **Per-source admin interface (FR-09):** CRUD on sources with per-source crawl frequency, depth, content type, and keyword-filter overrides. New sources must be test-crawled and validated before activation.
 - **Configurable per-source scheduling (FR-10):** Honor each source's interval; do not crawl early.
 - **Keyword filtering against active disease list:** Only matched content goes downstream. The active disease list and extraction fields are TBD (TBD-02, TBD-03 in the SRS).
@@ -60,7 +60,7 @@ When the codebase grows, the crawler naturally decomposes into:
 
 1. **Source registry** — DB-backed list of configured URLs with per-source config (admin CRUD via DRF).
 2. **Scheduler** — fires crawl jobs per source's interval; respects back-off state.
-3. **Fetchers** — pluggable per content type: generic HTML, RSS/Atom, EIOS API, social APIs.
+3. **Fetchers** — pluggable per content type: generic HTML, RSS/Atom, EIOS API.
 4. **Extractor** — pulls main text body from fetched pages (e.g., trafilatura/readability).
 5. **Keyword filter** — matches against the active disease list.
 6. **Dedup pipeline** — URL fingerprint → content hash → semantic similarity (chained as in FR-23).
