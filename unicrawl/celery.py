@@ -1,6 +1,6 @@
 """Celery application for scheduled crawl jobs.
 
-Per-source schedules (FR-10) and retry back-off (FR-14) are configured here once
+Per-source schedules and retry back-off are configured here once
 the scheduler module is implemented.
 """
 from __future__ import annotations

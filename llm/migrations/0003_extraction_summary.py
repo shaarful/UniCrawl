@@ -13,6 +13,6 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='articleextraction',
             name='summary',
-            field=models.TextField(blank=True, help_text='English summary of the article, 100-200 words (FR-16); empty until an extraction has completed.'),
+            field=models.TextField(blank=True, help_text='English summary of the article, 100-200 words; empty until an extraction has completed.'),
         ),
     ]

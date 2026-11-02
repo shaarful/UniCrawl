@@ -34,7 +34,7 @@ class ArticleExtraction(models.Model):
     )
     summary = models.TextField(
         blank=True,
-        help_text="English summary of the article, at most 100 words (FR-10); "
+        help_text="English summary of the article, at most 100 words; "
                   "empty until an extraction has completed.",
     )
     reporter_author = models.CharField(
@@ -93,7 +93,7 @@ class ArticleExtraction(models.Model):
 
 
 class ExtractedEvent(models.Model):
-    """One disease occurrence reported by an article (FR-09).
+    """One disease occurrence reported by an article.
 
     Every field except disease is optional: articles rarely state them all, and
     what an article does not state stays empty rather than being guessed.
@@ -143,7 +143,7 @@ class ExtractedEvent(models.Model):
         return f"{self.disease} in {place or 'unknown location'}"
 
     def as_record(self) -> dict:
-        """The FR-09 record: LLM fields plus the crawler's, with null where absent.
+        """The full record: LLM fields plus the crawler's, with null where absent.
 
         Where both have a value, the crawler's wins, because it comes from the
         page's metadata rather than from reading the text.
@@ -175,7 +175,7 @@ class ExtractedEvent(models.Model):
             "source_language": article.language or None,
             "reporter_author": article.author or extraction.reporter_author or None,
             "author_affiliation": extraction.author_affiliation or None,
-            # Needs the event grouping in FR-17; one article cannot tell.
+            # Needs event grouping across articles; one article cannot tell.
             "corroborating_sources_count": None,
             "response_action": self.response_action or None,
             "responding_authority": self.responding_authority or None,

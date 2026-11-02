@@ -2,7 +2,7 @@
 
 UniCrawl is the autonomous ingestion component of the **Regional Zoonotic Disease Observatory and Early Warning System (RZDO-EWS)**. It crawls administrator-configured open-source URLs — news portals, RSS feeds, and government health bulletins — filters content against an active disease keyword list, and hands matched articles to a downstream LLM extraction pipeline within 60 seconds.
 
-This service covers **FR-07 through FR-14** of the RZDO-EWS SRS (v1.5), plus LLM extraction in the `llm` app, which runs as its own worker process. All other microservices (validation/moderation, analytics, dashboard) are out of scope here.
+This service covers the crawler requirements of the RZDO-EWS SRS, plus LLM extraction in the `llm` app, which runs as its own worker process. All other microservices (validation/moderation, analytics, dashboard) are out of scope here.
 
 ---
 
@@ -72,7 +72,7 @@ The **Source** model is the master list of all URLs the crawler ingests. Adminis
 | `crawl_depth` | Link-follow depth; 1 = landing page only |
 | `keyword_filter_overrides` | Per-source disease keyword list; `null` = use global list |
 | `language_hint` | BCP-47 hint (e.g. `hi`, `bn`); blank = auto-detect |
-| `is_active` | Only active sources are scheduled; requires a passing test-crawl first (FR-09) |
+| `is_active` | Only active sources are scheduled; requires a passing test-crawl first |
 | `next_crawl_at` | Computed after each run; scheduler uses this to gate enqueuing |
 | `consecutive_failures` | Incremented by `record_failure()`; resets to 0 on success |
 | `is_temporarily_unavailable` | Set after 3 failed retries; admin must reset manually |
@@ -87,7 +87,7 @@ Two Celery tasks drive all crawl activity:
 
 **`crawler.tasks.crawl_source(source_id)`** — Runs the full pipeline for one source. On any unhandled exception it calls `record_failure(source_id)` to advance the back-off state, then re-raises so Celery marks the task as `FAILED`.
 
-**Back-off logic (FR-14):**
+**Back-off logic:**
 
 ```
 Initial failure  →  retry after  1 minute   (consecutive_failures = 1)
@@ -108,7 +108,7 @@ Each fetcher implements the `Fetcher` protocol: `fetch(url) → FetchResult`.
 |---|---|---|
 | `fetchers/html.py` | `HTMLFetcher` | News portals, government bulletins |
 | `fetchers/rss.py` | `RSSFetcher` | RSS / Atom feeds |
-| `fetchers/eios.py` | `EIOSFetcher` | WHO-EIOS authenticated feed (FR-07) — OAuth2 client credentials, time-windowed board paging |
+| `fetchers/eios.py` | `EIOSFetcher` | WHO-EIOS authenticated feed — OAuth2 client credentials, time-windowed board paging |
 
 `HTMLFetcher` and `RSSFetcher` share `HttpFetcher` (`fetchers/base.py`), which uses **httpx** with:
 - A `UniCrawl/0.1` User-Agent
@@ -141,7 +141,7 @@ Boards are stored as sources in the database — add them from the dashboard's
 - **Metadata:** the complete EIOS record is kept, unchanged, in `RawArticle.metadata["eios"]`, about 3 KB per article.
   - **Fields:** `id`, `eiosUrl`, `title`, `translatedTitle`, `description`, `translatedDescription`, `abstractiveSummary`, `link`, `pubDate`, `processedOnDate`, `language`/`languageIso`, `source`, `categories`, `countries`, `locations`, duplicate flags, `recommenderPrediction`, `highlights`, plus `fullText` when EIOS returns it.
   - **Snippet stays available:** the EIOS title, description and summary are kept even when the body is the crawled page text.
-  - **Translations:** the English translations also feed the keyword filter (FR-12).
+  - **Translations:** the English translations also feed the keyword filter.
 - **Streaming:** articles are released as their pages arrive, so matches are published while the board is still being read. One slow site doesn't hold up the others.
 
 ---
@@ -154,13 +154,13 @@ Turns raw fetched bytes into structured text.
 
 **RSS / Atom sources** — [feedparser](https://feedparser.readthedocs.io/) parses the feed. Each `<entry>` / `<item>` becomes a separate `FeedItem` with its own URL, title, body (HTML stripped to plain text via BeautifulSoup), and publish date. Entries without a usable link or ID are skipped because they cannot be deduplicated or re-fetched.
 
-Language detection is intentionally **not** done here — it is the pipeline's responsibility (FR-12), keeping extraction side-effect-free and deterministic.
+Language detection is intentionally **not** done here — it is the pipeline's responsibility, keeping extraction side-effect-free and deterministic.
 
 ---
 
 ### 5. Dedup Pipeline (`crawler/dedup/`)
 
-Three chained layers catch duplicates before storage (FR-11, FR-23). Each layer that fires creates a `RawArticle` record with `processing_status = suppressed`, an audit link (`duplicate_of`) pointing to the original, and a `suppression_reason`.
+Three chained layers catch duplicates before storage. Each layer that fires creates a `RawArticle` record with `processing_status = suppressed`, an audit link (`duplicate_of`) pointing to the original, and a `suppression_reason`.
 
 Re-crawling a source is not duplication. Items the same source already stored are skipped before these layers run. This covers unchanged feed items, the same HTML page, and EIOS items re-polled in the overlap window. Skipped items are not stored again and not reprocessed. They are counted as "Already stored" on the run page. Only repeats from a *different* source become suppressed duplicate records.
 
@@ -191,7 +191,7 @@ Enabled via `CRAWLER_SEMANTIC_DEDUP_ENABLED=True` (default `False` — sentence-
 
 ### 6. Keyword Filter (`crawler/filters/keyword.py`)
 
-Matches extracted body text against the active disease keyword list (FR-08). Returns a sorted list of matched canonical disease names, stored in `RawArticle.matched_diseases`. Only matched articles are forwarded downstream.
+Matches extracted body text against the active disease keyword list. Returns a sorted list of matched canonical disease names, stored in `RawArticle.matched_diseases`. Only matched articles are forwarded downstream.
 
 The keyword list is managed via the `DiseaseKeyword` model (see [Data Models](#data-models)). Matching is case-insensitive substring search. Language-agnostic keywords (empty `language` field) match any article; language-specific keywords only match articles detected in that language.
 
@@ -201,14 +201,14 @@ The keyword list is managed via the `DiseaseKeyword` model (see [Data Models](#d
 
 ### 7. Raw Store (`raw_content/`)
 
-Every article that passes fetching and extraction is written to `RawArticle` **before** any downstream processing (FR-13). The record is immutable after creation; only `processing_status` and dedup/match fields are updated as the pipeline progresses.
+Every article that passes fetching and extraction is written to `RawArticle` **before** any downstream processing. The record is immutable after creation; only `processing_status` and dedup/match fields are updated as the pipeline progresses.
 
 **Processing status lifecycle:**
 
 ```
 pending     →  fetched, waiting for dedup + keyword filter
 matched     →  keyword matched, waiting to be published to LLM queue
-published   →  successfully handed off to LLM queue (FR-08 ≤60s SLA met)
+published   →  successfully handed off to LLM queue (≤60s SLA met)
 suppressed  →  duplicate detected; audit link set to original article
 failed      →  unrecoverable pipeline error; see structured error log
 ```
@@ -241,9 +241,9 @@ A `redis.RedisError` propagates unchanged so the pipeline leaves the article in 
 
 ### 9. LLM Extraction Worker (`llm/`)
 
-`manage.py run_llm_worker` reads the stream above as the consumer group `LLM_CONSUMER_GROUP`, sends each article to Gemini on Vertex AI (`llm/gemini.py`) and stores the result as an `ArticleExtraction` with one `ExtractedEvent` per disease and place. Results are visible in the Django admin. An article that reports no disease occurrence is stored with `is_disease_event=False` and no events. Each event holds the FR-09 fields (SRS v1.13). Articles rarely state them all, so anything not stated stays null rather than being guessed. `ExtractedEvent.as_record()` returns the full FR-09 record, combining the LLM's fields with the crawler's, and the crawler's value wins where both exist. Lat/Lon is filled only when the article prints coordinates, because there is no geocoder yet, and Corroborating Sources Count stays null until event grouping (FR-17) exists.
+`manage.py run_llm_worker` reads the stream above as the consumer group `LLM_CONSUMER_GROUP`, sends each article to Gemini on Vertex AI (`llm/gemini.py`) and stores the result as an `ArticleExtraction` with one `ExtractedEvent` per disease and place. Results are visible in the Django admin. An article that reports no disease occurrence is stored with `is_disease_event=False` and no events. Each event holds the fields the SRS requires. Articles rarely state them all, so anything not stated stays null rather than being guessed. `ExtractedEvent.as_record()` returns the full structured record, combining the LLM's fields with the crawler's, and the crawler's value wins where both exist. Lat/Lon is filled only when the article prints coordinates, because there is no geocoder yet, and Corroborating Sources Count stays null until event grouping exists.
 
-Every processed article gets an English `summary` of at most 100 words (FR-10). Non-English articles also get a full English translation in `translated_title` and `translated_body`, whether or not they are relevant, so a reviewer can check the decision. Translation output is roughly as long as the article, so it adds to the token cost.
+Every processed article gets an English `summary` of at most 100 words. Non-English articles also get a full English translation in `translated_title` and `translated_body`, whether or not they are relevant, so a reviewer can check the decision. Translation output is roughly as long as the article, so it adds to the token cost.
 
 **From the admin:**
 - **Process with LLM** (article page and run page): sends the stored text to Gemini immediately, without Redis or the worker, and replaces any earlier result. To use the page's latest text, click **Refetch** first.
@@ -316,7 +316,7 @@ run_for_source(source_id)
       │       Match → write suppressed record (suppression_reason=semantic) → skip
       │       Disabled → skip (embedding remains null; model never loaded)
       │
-      ├─ 3d. LANGUAGE DETECTION (FR-12)
+      ├─ 3d. LANGUAGE DETECTION
       │       langdetect.detect(body) → BCP-47 tag
       │       Failure → fall back to source.language_hint or ""
       │       Non-English content is NOT dropped
@@ -326,12 +326,12 @@ run_for_source(source_id)
       │       Queries DiseaseKeyword table (or source.keyword_filter_overrides)
       │       No match → processing_status = pending
       │
-      ├─ 3f. PERSIST RAW (FR-13)
+      ├─ 3f. PERSIST RAW
       │       RawArticle.objects.create(url, body, fingerprints, language, ...)
       │       processing_status = matched  (if keyword hit)
       │                         = pending  (no hit or filter not yet wired)
       │
-      └─ 3g. PUBLISH to LLM Queue (FR-08, ≤60s SLA)
+      └─ 3g. PUBLISH to LLM Queue (≤60s SLA)
               if is_keyword_matched:
                   Redis XADD(LLM_QUEUE_NAME, fields)  →  msg_id returned
                   processing_status → published
@@ -417,7 +417,7 @@ ArticleExtraction
 ├── article            OneToOneField(RawArticle)
 ├── status             CharField — retrying | completed | failed
 ├── is_disease_event   BooleanField (null until completed)
-├── summary            TextField — English, at most 100 words (FR-10)
+├── summary            TextField — English, at most 100 words
 ├── reporter_author, author_affiliation, publication_date   from the text
 ├── translated_title, translated_body   TextField — English; blank if already English
 ├── input_hash         CharField(64) — model + prompt version + article text
@@ -427,7 +427,7 @@ ArticleExtraction
 ├── input_truncated    BooleanField — body exceeded LLM_MAX_INPUT_CHARS
 └── raw_response       TextField — the model's output, for audit
 
-ExtractedEvent (FR-09; only disease is required)
+ExtractedEvent (only disease is required)
 ├── extraction         ForeignKey(ArticleExtraction)
 ├── disease            CharField(255, db_index) — English, lowercase
 ├── host               CharField(255, db_index)
@@ -487,12 +487,12 @@ All settings are environment-variable-driven via `django-environ`. Copy `.env.ex
 | `LLM_REQUEST_TIMEOUT_SECONDS` | `300` | Timeout of one Gemini request |
 | `LLM_CLAIM_IDLE_SECONDS` | `600` | Wait before retrying an unfinished message; keep above the request timeout |
 | `CRAWLER_DEFAULT_INTERVAL_SECONDS` | `3600` | Default per-source crawl interval |
-| `CRAWLER_RETRY_BACKOFF_MINUTES` | `1,4,16` | FR-14 retry intervals (comma-separated) |
+| `CRAWLER_RETRY_BACKOFF_MINUTES` | `1,4,16` | Retry intervals (comma-separated) |
 | `CRAWLER_SEMANTIC_DEDUP_ENABLED` | `False` | Enable Layer 3 semantic dedup (requires sentence-transformers + ~2 GB PyTorch) |
-| `CRAWLER_SEMANTIC_DEDUP_THRESHOLD` | `0.85` | FR-23 cosine similarity threshold |
+| `CRAWLER_SEMANTIC_DEDUP_THRESHOLD` | `0.85` | Cosine similarity threshold |
 | `CRAWLER_SEMANTIC_MODEL` | `paraphrase-multilingual-MiniLM-L12-v2` | Sentence-transformer model name |
 | `CRAWLER_SEMANTIC_MAX_CANDIDATES` | `10000` | Max stored embeddings scanned per dedup check |
-| `EIOS_API_BASE_URL` | *(blank)* | WHO-EIOS API base URL (FR-07), e.g. `https://eios.who.int/portal/api` |
+| `EIOS_API_BASE_URL` | *(blank)* | WHO-EIOS API base URL, e.g. `https://eios.who.int/portal/api` |
 | `EIOS_API_VERSION` | `1.0` | EIOS API version path segment |
 | `EIOS_TOKEN_URL` | *(blank)* | Azure AD OAuth2 token endpoint for the client-credentials flow |
 | `EIOS_CLIENT_ID` | *(blank)* | EIOS consumer client ID |
@@ -602,7 +602,7 @@ Open `http://127.0.0.1:8000/` (staff login required). Only `runserver` is needed
 - **Add EIOS board** adds another WHO-EIOS board as a source: enter its board ID (built
   against `EIOS_API_BASE_URL`) or paste a full `…/Items/matching-board/<id>` URL, plus an
   optional name and crawl interval. New boards stay unscheduled unless *Schedule
-  automatically* is ticked — test them with **▶ Run now** first (FR-09).
+  automatically* is ticked — test them with **▶ Run now** first.
 - **Run page** (`/crawl/runs/<id>/`) updates every second:
   - **Progress:** the bar, current stage, elapsed time, articles/s and time remaining. EIOS
     progress follows the time range being read, one window at a time.
@@ -674,7 +674,7 @@ The worker needs Redis 6.2+ (for `XAUTOCLAIM`). Each article sent to Gemini cost
 
 **Health check endpoint:** `GET /health/` returns `{"status": "ok"}` — used by Kubernetes liveness/readiness probes.
 
-**Source management API:** `GET / POST / PUT / DELETE /sources/` — DRF endpoints for Source CRUD (FR-09). New sources default to `is_active=False`; activate them after a successful test-crawl.
+**Source management API:** `GET / POST / PUT / DELETE /sources/` — DRF endpoints for Source CRUD. New sources default to `is_active=False`; activate them after a successful test-crawl.
 
 ---
 
@@ -719,7 +719,7 @@ These items from SRS §7.3 are deliberately unresolved upstream and must be answ
 
 | ID | Status | Question |
 |---|---|---|
-| **TBD-01** | Open | Final regional language list beyond the initial South Asian set (blocks FR-12 full coverage) |
+| **TBD-01** | Open | Final regional language list beyond the initial South Asian set (blocks full multilingual coverage) |
 | **TBD-02** | **Resolved** | Disease list stored in `DiseaseKeyword` DB table, managed via Django admin / DRF API |
 | **TBD-03** | Open | Final extraction-field list for the LLM service (affects publisher payload schema) |
 | **TBD-04** | Open | LLM deployment option — in-house fine-tuned model vs. third-party API (affects queue payload) |

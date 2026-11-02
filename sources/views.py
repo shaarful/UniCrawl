@@ -1,4 +1,4 @@
-"""REST API views for source CRUD (FR-09).
+"""REST API views for source CRUD.
 
 A test-crawl + accessibility check must happen on create before activating the
 source — to be added once fetchers and pipeline are wired up.

@@ -1,4 +1,4 @@
-"""Active disease keyword registry — drives the keyword filter (SRS FR-08, TBD-02)."""
+"""Active disease keyword registry — drives the keyword filter (TBD-02)."""
 from __future__ import annotations
 
 from django.db import models

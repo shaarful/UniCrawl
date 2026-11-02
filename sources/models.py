@@ -1,4 +1,4 @@
-"""Source registry models (SRS FR-08, FR-09, FR-10, FR-14)."""
+"""Source registry models."""
 from __future__ import annotations
 
 from django.conf import settings
@@ -8,10 +8,10 @@ from django.db import models
 class Source(models.Model):
     """An administrator-configured ingestable URL with per-source crawl settings.
 
-    is_active defaults to False — FR-09 requires a test-crawl to succeed before
+    is_active defaults to False — a test-crawl must succeed before
     the source can be activated. The scheduler only processes active sources.
 
-    Back-off state (FR-14): after each failure consecutive_failures is incremented.
+    Back-off state: after each failure consecutive_failures is incremented.
     After 3 failures is_temporarily_unavailable is set and unavailable_until is
     set to now + back-off[consecutive_failures] minutes. Resets on next success.
     """
@@ -33,10 +33,10 @@ class Source(models.Model):
         max_length=10,
         blank=True,
         help_text="BCP-47 language tag (e.g. 'en', 'hi', 'bn'). "
-                  "Leave blank to auto-detect (FR-12).",
+                  "Leave blank to auto-detect.",
     )
 
-    # --- Crawl configuration (FR-09, FR-10) ---
+    # --- Crawl configuration ---
     crawl_interval_seconds = models.PositiveIntegerField(
         default=3600,
         help_text="How often to crawl this source. "
@@ -57,7 +57,7 @@ class Source(models.Model):
     is_active = models.BooleanField(
         default=False,
         help_text="Only active sources are scheduled. "
-                  "Set to True after a successful test-crawl (FR-09).",
+                  "Set to True after a successful test-crawl.",
     )
     notes = models.TextField(blank=True)
 
@@ -70,7 +70,7 @@ class Source(models.Model):
         help_text="Computed by scheduler after each run.",
     )
 
-    # --- Back-off state (FR-14: retry at 1, 4, 16 min; then mark unavailable) ---
+    # --- Back-off state (retry at 1, 4, 16 min; then mark unavailable) ---
     consecutive_failures = models.PositiveSmallIntegerField(default=0)
     is_temporarily_unavailable = models.BooleanField(default=False)
     unavailable_until = models.DateTimeField(null=True, blank=True)

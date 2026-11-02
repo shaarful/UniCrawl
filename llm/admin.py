@@ -27,7 +27,7 @@ class ArticleExtractionInline(admin.StackedInline):
     def has_add_permission(self, request, obj=None):
         return False
 
-    @admin.display(description="Extracted events (FR-09 records)")
+    @admin.display(description="Extracted events")
     def extracted_events(self, obj: ArticleExtraction):
         records = [event.as_record() for event in obj.events.all()]
         if not records:

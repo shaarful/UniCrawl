@@ -126,7 +126,7 @@ def test_message_is_not_acked_if_saving_fails(article):
     assert not worker.client.pipeline.called
 
 
-def test_all_fr09_event_fields_are_stored(article):
+def test_all_event_fields_are_stored(article):
     result = _result()
     result.extraction.events = [Event(
         disease="Nipah",

@@ -99,7 +99,7 @@ CELERY_BROKER_URL = env("CELERY_BROKER_URL", default="memory://")
 CELERY_RESULT_BACKEND = env("CELERY_RESULT_BACKEND", default="cache+memory://")
 CELERY_TASK_DEFAULT_QUEUE = "unicrawl.default"
 
-# Beat: poll for due sources every 30 s (FR-10)
+# Beat: poll for due sources every 30 s
 CELERY_BEAT_SCHEDULE = {
     "crawler-tick": {
         "task": "crawler.tasks.tick",
@@ -107,7 +107,7 @@ CELERY_BEAT_SCHEDULE = {
     },
 }
 
-# Crawler tunables (FR-10, FR-11/23, FR-14)
+# Crawler tunables
 CRAWLER_DEFAULT_INTERVAL_SECONDS = env("CRAWLER_DEFAULT_INTERVAL_SECONDS")
 CRAWLER_RETRY_BACKOFF_MINUTES = [int(x) for x in env("CRAWLER_RETRY_BACKOFF_MINUTES")]
 CRAWLER_SEMANTIC_DEDUP_THRESHOLD = env("CRAWLER_SEMANTIC_DEDUP_THRESHOLD")

@@ -81,7 +81,7 @@ def execute_run(run_id: int) -> None:
     """Run the pipeline for a CrawlRun, recording progress and the outcome.
 
     Pipeline errors are recorded on the run and re-raised so callers (Celery)
-    can apply FR-14 back-off.
+    can apply back-off.
     """
     from crawler.pipeline import run_for_source
 

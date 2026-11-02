@@ -1,4 +1,4 @@
-"""Layer 3 dedup: semantic similarity via sentence-transformer embeddings (SRS FR-23).
+"""Layer 3 dedup: semantic similarity via sentence-transformer embeddings.
 
 Threshold defaults to 0.85, configurable via settings.CRAWLER_SEMANTIC_DEDUP_THRESHOLD.
 

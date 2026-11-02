@@ -83,7 +83,7 @@ def test_extract_html_strips_nav_and_footer_boilerplate():
 
 
 def test_extract_html_language_is_none_until_pipeline_detects_it():
-    """Language detection is the pipeline's job (FR-12), not the extractor's."""
+    """Language detection is the pipeline's job, not the extractor's."""
     result = extract_html(HTML_SAMPLE, url="https://example.com/dengue")
     assert result.language is None
 

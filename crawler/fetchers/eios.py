@@ -1,4 +1,4 @@
-"""WHO-EIOS authenticated feed fetcher (SRS FR-07).
+"""WHO-EIOS authenticated feed fetcher.
 
 Pulls articles matching an EIOS board via the service-to-service API.
 Reads the EIOS_* settings (OAuth2 client credentials, board ID, paging).

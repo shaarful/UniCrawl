@@ -10,23 +10,23 @@ The Crawler Service is one of five microservices in the broader RZDO-EWS archite
 
 LLM extraction lives in the `llm` app by deliberate choice (the SRS lists it as a separate service, and the SRS is to be updated to match). Keep it easy to split out later: it runs as its own process (`manage.py run_llm_worker`), gets articles only through the Redis stream, and the dependency stays one-way, so `crawler` must never import `llm`.
 
-The SRS is the authoritative requirements document. Read it (`srs/RZDO_EWS_SRS_v1.5.docx`) before making architectural decisions. The crawler-specific requirements are FR-07 through FR-14 in §3.2.
+The SRS is the authoritative requirements document. Read it (`srs/RZDO_EWS_SRS_v1.5.docx`) before making architectural decisions. The crawler-specific requirements are in §3.2.
 
 ## Crawler Scope and Responsibilities
 
 What the crawler must do (per SRS §3.2):
 
-- **Source-agnostic ingestion (FR-08):** Pull from any administrator-configured URL, auto-detecting whether it's a news portal, RSS feed, or bulletin.
-- **Per-source admin interface (FR-09):** CRUD on sources with per-source crawl frequency, depth, content type, and keyword-filter overrides. New sources must be test-crawled and validated before activation.
-- **Configurable per-source scheduling (FR-10):** Honor each source's interval; do not crawl early.
+- **Source-agnostic ingestion:** Pull from any administrator-configured URL, auto-detecting whether it's a news portal, RSS feed, or bulletin.
+- **Per-source admin interface:** CRUD on sources with per-source crawl frequency, depth, content type, and keyword-filter overrides. New sources must be test-crawled and validated before activation.
+- **Configurable per-source scheduling:** Honor each source's interval; do not crawl early.
 - **Keyword filtering against active disease list:** Only matched content goes downstream. The active disease list and extraction fields are TBD (TBD-02, TBD-03 in the SRS).
-- **Duplicate suppression (FR-11, FR-23):** Multi-layer — URL fingerprinting → content hash → semantic similarity (default threshold ≥ 0.85). Duplicates are linked to the original and audit-logged.
-- **Multilingual retrieval (FR-12):** Support South Asian regional languages during crawling and search; do not drop non-English content.
-- **Raw store (FR-13):** Persist `(URL, title, body, metadata, timestamp)` with provenance before any downstream processing.
-- **Error handling (FR-14):** Retry failed sources up to 3 times with exponential back-off at **1, 4, and 16 minutes**, then mark temporarily unavailable.
-- **Authenticated feed (FR-07):** Also pulls from EIOS (WHO Event Information Site) via its API/RSS on schedule.
+- **Duplicate suppression:** Multi-layer — URL fingerprinting → content hash → semantic similarity (default threshold ≥ 0.85). Duplicates are linked to the original and audit-logged.
+- **Multilingual retrieval:** Support South Asian regional languages during crawling and search; do not drop non-English content.
+- **Raw store:** Persist `(URL, title, body, metadata, timestamp)` with provenance before any downstream processing.
+- **Error handling:** Retry failed sources up to 3 times with exponential back-off at **1, 4, and 16 minutes**, then mark temporarily unavailable.
+- **Authenticated feed:** Also pulls from EIOS (WHO Event Information Site) via its API/RSS on schedule.
 
-Hand-off contract: keyword-matched raw content must reach the LLM processing pipeline **within 60 seconds** of a crawl cycle being triggered (FR-08).
+Hand-off contract: keyword-matched raw content must reach the LLM processing pipeline **within 60 seconds** of a crawl cycle being triggered.
 
 ## Non-Functional Targets
 
@@ -63,7 +63,7 @@ When the codebase grows, the crawler naturally decomposes into:
 3. **Fetchers** — pluggable per content type: generic HTML, RSS/Atom, EIOS API.
 4. **Extractor** — pulls main text body from fetched pages (e.g., trafilatura/readability).
 5. **Keyword filter** — matches against the active disease list.
-6. **Dedup pipeline** — URL fingerprint → content hash → semantic similarity (chained as in FR-23).
+6. **Dedup pipeline** — URL fingerprint → content hash → semantic similarity (chained in this order).
 7. **Raw store** — Postgres tables for raw records and provenance.
 8. **Outbound publisher** — pushes matched records onto the queue for the LLM service.
 9. **Observability** — structured logs, `/health`, retry/back-off state, dead-letter queue.

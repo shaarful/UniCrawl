@@ -1,4 +1,4 @@
-"""Keyword filter against the active disease list (SRS FR-08).
+"""Keyword filter against the active disease list.
 
 Matches extracted article text against DiseaseKeyword records. Returns the
 list of canonical disease names that matched. Empty list = no match.
@@ -7,7 +7,7 @@ Per-source overrides: when a Source has keyword_filter_overrides set, those
 keywords are used instead of the global DB table. Each override keyword is
 treated as both the keyword to match and the disease name to return.
 
-Multilingual support (FR-12): keywords with language="" match articles in
+Multilingual support: keywords with language="" match articles in
 any language; language-specific keywords (e.g. language="hi") match only
 articles detected in that language.
 """

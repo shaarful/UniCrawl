@@ -1,4 +1,4 @@
-"""Raw ingested content store (SRS FR-13).
+"""Raw ingested content store.
 
 Every successful fetch persists a RawArticle BEFORE any downstream processing.
 Records are immutable after creation — update only processing_status and the
@@ -16,14 +16,14 @@ from sources.models import Source
 class RawArticle(models.Model):
     """Immutable raw ingestion record with provenance and pipeline state.
 
-    Dedup pipeline (FR-11/FR-23) writes url_fingerprint and content_hash on
+    Dedup pipeline writes url_fingerprint and content_hash on
     creation, then queries existing rows before deciding to suppress.
 
     processing_status tracks where the article is in the pipeline:
         pending    → fetched, waiting for dedup + keyword filter
         matched    → keyword matched, waiting to be published to LLM queue
         suppressed → duplicate detected; see suppression_reason + duplicate_of
-        published  → handed off to LLM queue (FR-08 ≤60s SLA)
+        published  → handed off to LLM queue (≤60s SLA)
         failed     → unrecoverable pipeline error; see the structured error log
     """
 
@@ -39,7 +39,7 @@ class RawArticle(models.Model):
         CONTENT = "content", "Content hash match"
         SEMANTIC = "semantic", "Semantic similarity match"
 
-    # --- Provenance (FR-13) ---
+    # --- Provenance ---
     source = models.ForeignKey(
         Source,
         on_delete=models.PROTECT,
@@ -63,13 +63,13 @@ class RawArticle(models.Model):
     language = models.CharField(
         max_length=10,
         blank=True,
-        help_text="BCP-47 language tag detected by langdetect (FR-12).",
+        help_text="BCP-47 language tag detected by langdetect.",
     )
     metadata = models.JSONField(
         null=True,
         blank=True,
         help_text="Source-specific provenance (e.g. EIOS id, countries, categories) "
-                  "preserved for the LLM extraction service (FR-13, TBD-03).",
+                  "preserved for the LLM extraction service (TBD-03).",
     )
 
     # --- Source-stated article fields (crawler-extracted; the LLM service
@@ -99,13 +99,13 @@ class RawArticle(models.Model):
                   "or, for EIOS, the publisher type (webnews, wire, socialmedia-…).",
     )
 
-    # --- Dedup fingerprints (FR-11, FR-23) ---
+    # --- Dedup fingerprints ---
     # Indexed for fast lookup; uniqueness is enforced by the dedup pipeline,
     # not a DB constraint, to avoid race conditions on concurrent crawl workers.
     url_fingerprint = models.CharField(max_length=64, db_index=True)
     content_hash = models.CharField(max_length=64, db_index=True)
 
-    # --- Duplicate tracking (FR-11, FR-23) ---
+    # --- Duplicate tracking ---
     is_duplicate = models.BooleanField(default=False)
     duplicate_of = models.ForeignKey(
         "self",
@@ -121,7 +121,7 @@ class RawArticle(models.Model):
         blank=True,
     )
 
-    # --- Semantic dedup embedding (FR-23, Layer 3) ---
+    # --- Semantic dedup embedding (Layer 3) ---
     # Stored as JSON list[float] for DB portability; migrate to pgvector VectorField
     # once the production PostgreSQL has the pgvector extension installed.
     embedding = models.JSONField(
@@ -130,7 +130,7 @@ class RawArticle(models.Model):
         help_text="Sentence-transformer embedding vector (384 dims). Used for semantic dedup.",
     )
 
-    # --- Keyword match (FR-08) ---
+    # --- Keyword match ---
     is_keyword_matched = models.BooleanField(
         default=False,
         db_index=True,

@@ -1,4 +1,4 @@
-"""Outbound publisher to the LLM extraction queue (SRS FR-08 hand-off).
+"""Outbound publisher to the LLM extraction queue (hand-off).
 
 Pushes keyword-matched RawArticle records onto a Redis Streams topic for
 the downstream LLM Processing Service. At-least-once delivery (NFR §5.3):
@@ -26,7 +26,7 @@ def _get_client() -> redis.Redis:
 
 
 def publish_matched(raw_article_id: int) -> None:
-    """Push a keyword-matched article onto the LLM handoff stream (FR-08).
+    """Push a keyword-matched article onto the LLM handoff stream.
 
     Raises redis.RedisError on connection or command failure — the pipeline
     leaves the article in MATCHED status so it can be retried.

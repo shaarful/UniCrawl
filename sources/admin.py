@@ -1,4 +1,4 @@
-"""Django admin registration for source management (FR-09)."""
+"""Django admin registration for source management."""
 from django.contrib import admin
 
 from .models import Source

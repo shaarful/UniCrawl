@@ -30,7 +30,7 @@ class HttpFetcher:
 
     Network errors (timeout, connection refused, DNS failure) propagate as
     httpx.HTTPError subclasses; the scheduler catches them to trigger the
-    FR-14 retry back-off. Non-2xx responses are returned as-is — the pipeline
+    retry back-off. Non-2xx responses are returned as-is — the pipeline
     decides whether to treat them as failures based on status_code.
 
     Subclasses override `_extra_headers()` to add content-type-specific headers

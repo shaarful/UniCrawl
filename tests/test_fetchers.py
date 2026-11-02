@@ -57,7 +57,7 @@ def test_html_fetcher_follows_redirects_and_records_final_url():
 
 
 def test_fetcher_returns_non_2xx_without_raising():
-    """FR-14 says HTTP errors are handled by the scheduler back-off — fetcher just
+    """HTTP errors are handled by the scheduler back-off — fetcher just
     returns the response so the pipeline can record the actual status_code."""
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -70,7 +70,7 @@ def test_fetcher_returns_non_2xx_without_raising():
 
 
 def test_network_errors_propagate_for_scheduler_to_catch():
-    """The scheduler relies on httpx exceptions to trigger FR-14 back-off."""
+    """The scheduler relies on httpx exceptions to trigger back-off."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("simulated network failure")

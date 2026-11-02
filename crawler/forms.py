@@ -13,7 +13,7 @@ _BOARD_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 class EIOSBoardForm(forms.Form):
-    """Add a WHO-EIOS board as a source (FR-07, FR-09).
+    """Add a WHO-EIOS board as a source.
 
     The board is given by its ID, or by a full matching-board API URL when it
     lives on a different EIOS instance than EIOS_API_BASE_URL.
@@ -37,7 +37,7 @@ class EIOSBoardForm(forms.Form):
     is_active = forms.BooleanField(
         label="Schedule automatically",
         required=False,
-        help_text="Leave off until a test run from the dashboard succeeds (FR-09).",
+        help_text="Leave off until a test run from the dashboard succeeds.",
     )
 
     def clean_board(self) -> str:
@@ -83,5 +83,5 @@ class EIOSBoardForm(forms.Form):
             crawl_interval_seconds=data["interval_minutes"] * 60,
             is_active=data["is_active"],
             added_by=user if user is not None and user.is_authenticated else None,
-            notes=f"WHO-EIOS board {board_id} via the service-to-service API (FR-07).",
+            notes=f"WHO-EIOS board {board_id} via the service-to-service API.",
         )

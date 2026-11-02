@@ -212,7 +212,7 @@ def test_unknown_publication_date_says_so(extractor, published_at):
     assert "Publication date: unknown" in extractor.generate.call_args.kwargs["contents"]
 
 
-def test_every_fr09_event_field_is_optional_except_disease():
+def test_every_event_field_is_optional_except_disease():
     event = Event(disease="rabies")
 
     values = event.model_dump(exclude={"disease"})

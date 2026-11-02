@@ -1,4 +1,4 @@
-"""Multi-layer duplicate suppression (SRS FR-11, FR-23).
+"""Multi-layer duplicate suppression.
 
 Checks are run in sequence; any positive match suppresses the article:
     1. URL fingerprint

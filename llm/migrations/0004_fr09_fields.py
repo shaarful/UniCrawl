@@ -106,6 +106,6 @@ class Migration(migrations.Migration):
         migrations.AlterField(
             model_name='articleextraction',
             name='summary',
-            field=models.TextField(blank=True, help_text='English summary of the article, at most 100 words (FR-10); empty until an extraction has completed.'),
+            field=models.TextField(blank=True, help_text='English summary of the article, at most 100 words; empty until an extraction has completed.'),
         ),
     ]

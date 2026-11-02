@@ -13,6 +13,6 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='rawarticle',
             name='metadata',
-            field=models.JSONField(blank=True, help_text='Source-specific provenance (e.g. EIOS id, countries, categories) preserved for the LLM extraction service (FR-13, TBD-03).', null=True),
+            field=models.JSONField(blank=True, help_text='Source-specific provenance (e.g. EIOS id, countries, categories) preserved for the LLM extraction service (TBD-03).', null=True),
         ),
     ]

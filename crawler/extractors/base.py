@@ -78,7 +78,7 @@ def extract_html(html: bytes, url: str) -> ExtractedContent:
         title=title,
         body=body,
         published_at=published_at,
-        language=None,  # filled in by the pipeline via langdetect (FR-12)
+        language=None,  # filled in by the pipeline via langdetect
         author=author,
         site_name=site_name,
     )

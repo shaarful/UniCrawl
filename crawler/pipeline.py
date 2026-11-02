@@ -1,15 +1,14 @@
-"""End-to-end crawl pipeline for a single source (SRS FR-08, FR-11, FR-12, FR-13, FR-23).
+"""End-to-end crawl pipeline for a single source.
 
 Stage order:
     1. fetch          — pull content via the appropriate fetcher.
     2. extract        — extract main text body (HTML parsing / RSS field mapping).
     3. dedup          — URL fingerprint → content hash → semantic similarity (≥ 0.85
                         configurable). Suppress and link to original if matched.
-    4. detect language — record source language; do not drop non-English content (FR-12).
+    4. detect language — record source language; do not drop non-English content.
     5. keyword filter — match against the active disease list.
-    6. persist raw    — write RawArticle with provenance (FR-13).
-    7. publish        — push matched records onto the LLM-handoff queue (FR-08
-                        end-to-end SLA: ≤ 60 seconds).
+    6. persist raw    — write RawArticle with provenance.
+    7. publish        — push matched records onto the LLM-handoff queue (end-to-end SLA: ≤ 60 seconds).
 """
 from __future__ import annotations
 
@@ -65,7 +64,7 @@ class _Article:
     # Extra text the keyword filter sees but is not persisted as body
     # (e.g. EIOS English translations of non-English articles).
     match_text: str | None = None
-    # Source-specific provenance persisted alongside the raw record (FR-13).
+    # Source-specific provenance persisted alongside the raw record.
     metadata: dict | None = None
     # Source-stated fields the crawler supplies (the LLM extracts the rest).
     author: str = ""
@@ -116,7 +115,7 @@ def _already_stored(source: Source, fp: str) -> bool:
     Re-reading a feed or re-polling an EIOS window returns items the source
     already has. They are not new, so they are skipped outright rather than
     recorded as suppressed duplicates; repeats from *other* sources still go
-    through the dedup layers (FR-11/FR-23).
+    through the dedup layers.
     """
     from raw_content.models import RawArticle
 
@@ -137,7 +136,7 @@ def _unseen(source: Source, candidates: list[_Article]) -> list[_Article]:
 
 
 # ---------------------------------------------------------------------------
-# EIOS candidates (FR-07)
+# EIOS candidates
 # ---------------------------------------------------------------------------
 
 # Re-read this much before the last crawl: EIOS imports articles with a lag, so
@@ -292,7 +291,7 @@ def _eios_candidates(
     used and `metadata.link_error` why the original page was not.
 
     Articles are yielded as their pages arrive, so matches are persisted and
-    published while the rest of the board is still being read (FR-08 ≤60s
+    published while the rest of the board is still being read (≤60s
     hand-off).
     """
     from concurrent.futures import (
@@ -410,7 +409,7 @@ def _detect_language(text: str, hint: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _raw_fields(source: Source, article: _Article, fetched_at) -> dict:
-    """RawArticle fields shared by stored and suppressed records (FR-13)."""
+    """RawArticle fields shared by stored and suppressed records."""
     from crawler.extractors.base import parse_published
 
     return {
@@ -477,7 +476,7 @@ def _process_article(source: Source, article: _Article, fetched_at) -> str:
         _suppress(source, article, fetched_at, dup_id, RawArticle.SuppressionReason.CONTENT)
         return _progress.SUPPRESSED
 
-    # Layer 3: semantic dedup (FR-23) — enabled via CRAWLER_SEMANTIC_DEDUP_ENABLED
+    # Layer 3: semantic dedup — enabled via CRAWLER_SEMANTIC_DEDUP_ENABLED
     embedding: list[float] | None = None
     if settings.CRAWLER_SEMANTIC_DEDUP_ENABLED and article.body:
         from crawler.dedup.semantic import compute_embedding
@@ -489,10 +488,10 @@ def _process_article(source: Source, article: _Article, fetched_at) -> str:
                 _suppress(source, article, fetched_at, dup_id, RawArticle.SuppressionReason.SEMANTIC)
                 return _progress.SUPPRESSED
 
-    # Language detection (FR-12)
+    # Language detection
     lang = _detect_language(article.body, article.language)
 
-    # Keyword filter (FR-08)
+    # Keyword filter
     from crawler.filters.keyword import matches_active_diseases
     matched_diseases = matches_active_diseases(
         _join_text(article.body, article.match_text),
@@ -501,7 +500,7 @@ def _process_article(source: Source, article: _Article, fetched_at) -> str:
     )
     is_matched = bool(matched_diseases)
 
-    # Persist raw record (FR-13)
+    # Persist raw record
     status = (
         RawArticle.ProcessingStatus.MATCHED
         if is_matched
@@ -527,7 +526,7 @@ def _process_article(source: Source, article: _Article, fetched_at) -> str:
     if not is_matched:
         return _progress.STORED
 
-    # Publish to LLM queue (FR-08 ≤60s SLA)
+    # Publish to LLM queue (≤60s SLA)
     try:
         from crawler.publisher import publish_matched
         publish_matched(record.id)
@@ -566,7 +565,7 @@ def run_for_source(source_id: int, progress: _progress.NullProgress | None = Non
     fetcher = _fetcher_for(source)
     candidates = None
     try:
-        # Network errors propagate to the caller (scheduler) for FR-14 back-off.
+        # Network errors propagate to the caller (scheduler) for back-off.
         if source.content_type == Source.ContentType.EIOS:
             # Streamed: each article is processed as soon as its page is read.
             candidates = _eios_candidates(source, fetcher, fetched_at, progress)
@@ -613,7 +612,7 @@ def run_for_source(source_id: int, progress: _progress.NullProgress | None = Non
         if hasattr(fetcher, "close"):
             fetcher.close()
 
-    # Mark source successful and schedule next crawl (FR-10)
+    # Mark source successful and schedule next crawl
     source.last_crawled_at = fetched_at
     source.next_crawl_at = fetched_at + timedelta(seconds=source.crawl_interval_seconds)
     source.consecutive_failures = 0

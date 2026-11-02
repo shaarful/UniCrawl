@@ -1,4 +1,4 @@
-"""Per-source crawl scheduler (SRS FR-10, FR-14).
+"""Per-source crawl scheduler.
 
 Responsibilities:
 - Fire a crawl job for each active source on its configured interval.
@@ -52,7 +52,7 @@ def schedule_due_sources() -> int:
 
 
 def record_failure(source_id: int) -> None:
-    """Increment failure count and compute the next retry time per FR-14 back-off.
+    """Increment failure count and compute the next retry time per the back-off schedule.
 
     Intervals from settings.CRAWLER_RETRY_BACKOFF_MINUTES (default [1, 4, 16]).
     After all retries are exhausted the source is marked temporarily unavailable

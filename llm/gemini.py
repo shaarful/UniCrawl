@@ -1,8 +1,8 @@
 """Extract disease events from article text with Gemini on Vertex AI.
 
-Requirement numbers refer to SRS v1.13: FR-07 translation, FR-08 relevance check,
-FR-09 extracted fields, FR-10 summary. All four happen in one call, as agreed, which
-is why the model reads the original text rather than a translation of it.
+Translation, the relevance check, field extraction and the summary all happen in one
+call, as agreed, which is why the model reads the original text rather than a
+translation of it.
 """
 from __future__ import annotations
 

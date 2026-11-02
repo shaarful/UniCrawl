@@ -23,7 +23,7 @@ class Migration(migrations.Migration):
                 ('fetched_at', models.DateTimeField()),
                 ('title', models.CharField(blank=True, max_length=1024)),
                 ('body', models.TextField()),
-                ('language', models.CharField(blank=True, help_text='BCP-47 language tag detected by langdetect (FR-12).', max_length=10)),
+                ('language', models.CharField(blank=True, help_text='BCP-47 language tag detected by langdetect.', max_length=10)),
                 ('url_fingerprint', models.CharField(db_index=True, max_length=64)),
                 ('content_hash', models.CharField(db_index=True, max_length=64)),
                 ('is_duplicate', models.BooleanField(default=False)),
