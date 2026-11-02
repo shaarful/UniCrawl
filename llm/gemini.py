@@ -21,7 +21,7 @@ from google.oauth2 import service_account
 from pydantic import BaseModel, BeforeValidator, Field
 
 # Bump when the prompt or schema changes: a re-sent article is then re-extracted.
-PROMPT_VERSION = "4"
+PROMPT_VERSION = "5"
 
 _ARTICLE_TAGS = re.compile(r"^\s*<article>\s*|\s*</article>\s*$")
 
@@ -47,6 +47,10 @@ guess, and never fill a field from general knowledge. For each event:
   of exposure is not the host, and never assume humans.
 - affected_population_size: the total people or animals the article describes as
   affected or exposed, such as contacts under observation. Do not calculate it.
+- Place fields describe where the cases or outbreak happened, not where the news came
+  from. The location of a seminar, press conference, laboratory, head office or
+  dateline is not the place of the event: "eight cases across Bangladesh, presented at a
+  seminar in Dhaka" has country Bangladesh and null division, district and village.
 - country: the English name of the country, named or unambiguous from a named place.
 - division, district, village: the place at each level, only as named in the article.
   Use division for a division, province or state, district for a district or city, and

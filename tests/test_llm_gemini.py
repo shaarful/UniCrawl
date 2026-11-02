@@ -194,6 +194,16 @@ def test_prompt_forbids_guessing_absent_fields(extractor):
     assert "Never look them up" in instruction
 
 
+def test_prompt_separates_the_place_of_the_event_from_where_it_was_announced(extractor):
+    extractor.generate.return_value = _response(Extraction(is_disease_event=False, summary="x"))
+
+    extractor.extract("Title", "Body")
+
+    instruction = extractor.generate.call_args.kwargs["config"].system_instruction
+    assert "not where the news came" in instruction
+    assert "press conference" in instruction
+
+
 def test_publication_date_is_sent_for_working_out_relative_dates(extractor):
     extractor.generate.return_value = _response(Extraction(is_disease_event=False, summary="x"))
 
