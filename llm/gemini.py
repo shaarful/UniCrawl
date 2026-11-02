@@ -6,6 +6,7 @@ is why the model reads the original text rather than a translation of it.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Annotated, Literal
@@ -21,6 +22,8 @@ from pydantic import BaseModel, BeforeValidator, Field
 
 # Bump when the prompt or schema changes: a re-sent article is then re-extracted.
 PROMPT_VERSION = "4"
+
+_ARTICLE_TAGS = re.compile(r"^\s*<article>\s*|\s*</article>\s*$")
 
 SYSTEM_INSTRUCTION = """\
 You extract structured records from news articles for a zoonotic disease early
@@ -229,6 +232,9 @@ class GeminiExtractor:
             raise ArticleError(f"No valid extraction in response: {response.text!r}"[:500])
         if not extraction.summary.strip():
             raise ArticleError("Response has an empty summary")
+        if extraction.translated_body:
+            # The model sometimes copies the tags that mark the article in the prompt.
+            extraction.translated_body = _ARTICLE_TAGS.sub("", extraction.translated_body)
 
         extraction.events = (
             [event for event in extraction.events if event.disease.strip()]

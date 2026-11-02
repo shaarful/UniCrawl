@@ -237,6 +237,24 @@ def test_location_type_only_allows_the_srs_values():
         Event(disease="rabies", location_type="hospital")
 
 
+@pytest.mark.parametrize(
+    "returned, expected",
+    [
+        ("<article>Line one.\nLine two.</article>", "Line one.\nLine two."),
+        ("\n<article>\nLine one.\n</article>\n", "Line one."),
+        ("Line one.", "Line one."),
+        ("A <article> inside the text stays.", "A <article> inside the text stays."),
+    ],
+    ids=["tags", "tags-with-whitespace", "no-tags", "tag-in-text"],
+)
+def test_prompt_tags_copied_into_the_translation_are_removed(extractor, returned, expected):
+    extractor.generate.return_value = _response(
+        Extraction(is_disease_event=False, summary="x", translated_body=returned),
+    )
+
+    assert extractor.extract("Title", "Body").extraction.translated_body == expected
+
+
 def test_prompt_asks_for_a_full_english_translation(extractor):
     extractor.generate.return_value = _response(Extraction(is_disease_event=False, summary="x"))
 
