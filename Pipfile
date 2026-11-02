@@ -20,6 +20,7 @@ structlog = "*"
 numpy = "*"
 sentence-transformers = "*"
 google-genai = "*"
+playwright = "*"
 
 [dev-packages]
 pytest = "*"

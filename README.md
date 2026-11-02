@@ -69,7 +69,7 @@ The **Source** model is the master list of all URLs the crawler ingests. Adminis
 | `url` | The target URL to crawl |
 | `content_type` | `html`, `rss`, or `eios` — determines which fetcher is used |
 | `crawl_interval_seconds` | How often to crawl this source (default: 3600 s) |
-| `crawl_depth` | Link-follow depth; 1 = landing page only |
+| `crawl_depth` | HTML sources only. `1` = the URL is a single article. `2` = the URL is a list of articles, so follow its links. `3` = also follow links found on those pages |
 | `keyword_filter_overrides` | Per-source disease keyword list; `null` = use global list |
 | `language_hint` | BCP-47 hint (e.g. `hi`, `bn`); blank = auto-detect |
 | `is_active` | Only active sources are scheduled; requires a passing test-crawl first |
@@ -109,6 +109,16 @@ Each fetcher implements the `Fetcher` protocol: `fetch(url) → FetchResult`.
 | `fetchers/html.py` | `HTMLFetcher` | News portals, government bulletins |
 | `fetchers/rss.py` | `RSSFetcher` | RSS / Atom feeds |
 | `fetchers/eios.py` | `EIOSFetcher` | WHO-EIOS authenticated feed — OAuth2 client credentials, time-windowed board paging |
+| `fetchers/browser.py` | `PageLoader` | Renders pages in headless Chromium when a plain request only returns an empty JavaScript shell |
+
+#### JavaScript sites and list pages
+
+- **Rendering:** a page gets a plain HTTP request first. The browser starts only if the response is an empty shell (scripts, almost no text, almost no links), or if a list page shows no article links. After one shell, the rest of that site is rendered for that crawl. Rendering takes a few seconds per page.
+- **List pages (`crawl_depth` 2+):** the list page itself is not stored. Links under its own path are followed (`/news` → `/news/some-story`). If there are none, links are judged by how they look, which is less reliable. Links in site navigation, headers and footers, links to other sites, and links to files are ignored.
+- **Each crawl:** already stored pages are not requested again, so a crawl only reads what is new. A page that fails is not stored, so the next crawl retries it. Only the list page itself is read, so older articles on later pages are not collected.
+- **Limits:** `robots.txt` is respected for followed links, requests are spaced by `CRAWLER_LINK_DELAY_SECONDS`, and a run stops at `CRAWLER_MAX_PAGES_PER_RUN` pages.
+- **No circumvention:** the browser identifies itself as UniCrawl. A site that refuses the crawler (HTTP 403, for example) fails with that error and is not worked around.
+- **Pages with no text** are not stored; the crawl reports a warning instead. **Refetch** also renders pages for HTML sources. EIOS article links still use plain requests only.
 
 `HTMLFetcher` and `RSSFetcher` share `HttpFetcher` (`fetchers/base.py`), which uses **httpx** with:
 - A `UniCrawl/0.1` User-Agent
@@ -452,6 +462,7 @@ ExtractedEvent (only disease is required)
 | Task queue | Celery 5.x with Redis broker |
 | Beat scheduler | Celery beat (polls for due sources every 30 s) |
 | HTTP client | httpx with HTTP/2 support |
+| JavaScript rendering | Playwright with headless Chromium |
 | HTML extraction | trafilatura + BeautifulSoup4 + lxml |
 | Feed parsing | feedparser |
 | Language detection | langdetect |
@@ -492,6 +503,10 @@ All settings are environment-variable-driven via `django-environ`. Copy `.env.ex
 | `CRAWLER_SEMANTIC_DEDUP_THRESHOLD` | `0.85` | Cosine similarity threshold |
 | `CRAWLER_SEMANTIC_MODEL` | `paraphrase-multilingual-MiniLM-L12-v2` | Sentence-transformer model name |
 | `CRAWLER_SEMANTIC_MAX_CANDIDATES` | `10000` | Max stored embeddings scanned per dedup check |
+| `CRAWLER_BROWSER_ENABLED` | `True` | Render JavaScript-built pages in a headless browser |
+| `CRAWLER_BROWSER_TIMEOUT_SECONDS` | `30` | Timeout for loading one page in the browser |
+| `CRAWLER_MAX_PAGES_PER_RUN` | `50` | Pages requested per crawl when following links; the next crawl continues |
+| `CRAWLER_LINK_DELAY_SECONDS` | `1` | Wait between requests when following links |
 | `EIOS_API_BASE_URL` | *(blank)* | WHO-EIOS API base URL, e.g. `https://eios.who.int/portal/api` |
 | `EIOS_API_VERSION` | `1.0` | EIOS API version path segment |
 | `EIOS_TOKEN_URL` | *(blank)* | Azure AD OAuth2 token endpoint for the client-credentials flow |
@@ -525,7 +540,12 @@ cd UniCrawl
 
 # Install all dependencies (app + dev tools)
 pipenv install --dev
+
+# Download the headless browser used for JavaScript-built sites
+pipenv run playwright install chromium
 ```
+
+In a Linux container, use `playwright install --with-deps chromium` so the browser's system libraries are installed too.
 
 ### 2. Configure environment
 
@@ -710,6 +730,7 @@ pipenv run pytest --cov=crawler --cov=sources --cov=raw_content
 | `test_llm_gemini.py` | Gemini response mapping, schema config, truncation, article-error vs. outage classification |
 | `test_llm_worker.py` | Storing results, redelivery, retries, dead-lettering, outage back-off, consumer group recovery |
 | `test_llm_admin.py` | Process with LLM button, result display, failure handling, bulk send to the queue |
+| `test_html_crawl.py` | Empty-shell detection, browser rendering (one test uses a real browser), link selection, robots.txt, crawl depth, refetch |
 
 ---
 

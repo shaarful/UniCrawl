@@ -1,7 +1,9 @@
 """End-to-end crawl pipeline for a single source.
 
 Stage order:
-    1. fetch          — pull content via the appropriate fetcher.
+    1. fetch          — pull content via the appropriate fetcher. HTML pages that only
+                        exist once JavaScript runs are rendered in a browser, and list
+                        pages (crawl depth 2+) have their article links followed.
     2. extract        — extract main text body (HTML parsing / RSS field mapping).
     3. dedup          — URL fingerprint → content hash → semantic similarity (≥ 0.85
                         configurable). Suppress and link to original if matched.
@@ -72,40 +74,23 @@ class _Article:
     source_type: str = ""
 
 
-def _extract_candidates(source: Source, result) -> list[_Article]:
-    from crawler.extractors.base import extract_feed, extract_html
+def _feed_candidates(source: Source, result) -> list[_Article]:
+    from crawler.extractors.base import extract_feed
 
-    if source.content_type == Source.ContentType.RSS:
-        return [
-            _Article(
-                url=item.url,
-                final_url=item.url,
-                http_status=result.status_code,
-                title=item.content.title or "",
-                body=item.content.body,
-                language=item.content.language or source.language_hint or "",
-                published_at=item.content.published_at,
-                author=item.content.author or "",
-                source_name=item.content.site_name or source.name,
-                source_type=source.content_type,
-            )
-            for item in extract_feed(result.body)
-        ]
-
-    content = extract_html(result.body, url=result.final_url)
     return [
         _Article(
-            url=result.url,
-            final_url=result.final_url,
+            url=item.url,
+            final_url=item.url,
             http_status=result.status_code,
-            title=content.title or "",
-            body=content.body,
-            language=source.language_hint or "",
-            published_at=content.published_at,
-            author=content.author or "",
-            source_name=source.name,
+            title=item.content.title or "",
+            body=item.content.body,
+            language=item.content.language or source.language_hint or "",
+            published_at=item.content.published_at,
+            author=item.content.author or "",
+            source_name=item.content.site_name or source.name,
             source_type=source.content_type,
         )
+        for item in extract_feed(result.body)
     ]
 
 
@@ -136,6 +121,171 @@ def _unseen(source: Source, candidates: list[_Article]) -> list[_Article]:
 
 
 # ---------------------------------------------------------------------------
+# HTML candidates
+# ---------------------------------------------------------------------------
+
+_NON_HTML_MARKERS = ("pdf", "image/", "video/", "audio/", "zip", "msword", "officedocument")
+
+
+def _is_html(result) -> bool:
+    content_type = (result.headers.get("content-type") or "").lower()
+    return not any(marker in content_type for marker in _NON_HTML_MARKERS)
+
+
+def _html_article(source: Source, result, link_text: str = "") -> _Article | None:
+    """The article on this page, or None if the page has no article text."""
+    from crawler.extractors.base import extract_html
+
+    content = extract_html(result.body, url=result.final_url)
+    if not content.body:
+        return None
+    return _Article(
+        url=result.url,
+        final_url=result.final_url,
+        http_status=result.status_code,
+        title=content.title or link_text,
+        body=content.body,
+        language=source.language_hint or "",
+        published_at=content.published_at,
+        author=content.author or "",
+        source_name=source.name,
+        source_type=source.content_type,
+    )
+
+
+def _single_page_candidates(
+    source: Source, landing, progress: _progress.NullProgress,
+) -> Iterator[_Article]:
+    """Crawl depth 1: the source URL is itself the article."""
+    if _already_stored(source, _uf.fingerprint(landing.url)):
+        progress.skip()
+        progress.stage("Processing 0 new articles (1 already stored)", percent=0)
+        progress.segment(0, 100, 0)
+        return
+    article = _html_article(source, landing)
+    if article is None:
+        progress.event(
+            "warning",
+            f"No article text found at {source.url}, so nothing was stored. If this is a list "
+            "of articles, set the source's crawl depth to 2 to follow its links.",
+        )
+        return
+    progress.stage("Processing 1 new articles (0 already stored)", percent=0)
+    progress.segment(0, 100, 1)
+    yield article
+
+
+def _followed_candidates(
+    source: Source, loader, fetcher, landing, progress: _progress.NullProgress,
+) -> Iterator[_Article]:
+    """Crawl depth 2 or more: the source URL is a list, and its links are the articles.
+
+    Pages already stored are skipped before being requested, so each crawl only
+    reads what is new. A page that fails is not stored, so the next crawl retries it.
+    """
+    import time
+    from collections import deque
+
+    import httpx
+
+    from crawler.links import RobotsRules, article_links
+
+    links = article_links(landing.body, landing.final_url)
+    if not links:
+        # A menu can hide a JavaScript-built list from the shell check, so look once more.
+        progress.stage(f"Rendering {source.url} in a browser")
+        rendered = loader.render(source.url)
+        if rendered is not None and rendered.status_code < 400:
+            landing = rendered
+            links = article_links(landing.body, landing.final_url)
+    if not links:
+        progress.event("warning", f"No article links found on {source.url}.")
+        return
+
+    new = [link for link in links if not _already_stored(source, _uf.fingerprint(link.url))]
+    max_pages = settings.CRAWLER_MAX_PAGES_PER_RUN
+    progress.stage(
+        f"Reading {min(len(new), max_pages)} new articles "
+        f"({len(links) - len(new)} already stored)",
+        percent=0,
+    )
+    progress.segment(0, 100, min(len(new), max_pages))
+
+    robots = RobotsRules(fetcher)
+    seen = {_uf.fingerprint(landing.url), _uf.fingerprint(landing.final_url)}
+    queue = deque((link, 1) for link in links)
+    requested = no_text = disallowed = 0
+    while queue:
+        link, level = queue.popleft()
+        fp = _uf.fingerprint(link.url)
+        if fp in seen:
+            continue
+        seen.add(fp)
+        if _already_stored(source, fp):
+            progress.skip()
+            continue
+        if requested >= max_pages:
+            progress.event(
+                "info", f"Stopped at {max_pages} pages; the next crawl continues with the rest.",
+            )
+            break
+        if not robots.allowed(link.url):
+            disallowed += 1
+            continue
+
+        if requested:
+            time.sleep(settings.CRAWLER_LINK_DELAY_SECONDS)
+        requested += 1
+        try:
+            page = loader.load(link.url)
+        except httpx.HTTPError as exc:
+            progress.event("warning", f"{link.url} — {type(exc).__name__}: {exc}")
+            continue
+        if page.status_code >= 400:
+            progress.event("warning", f"{link.url} — HTTP {page.status_code}")
+            continue
+        if not _is_html(page):
+            continue
+
+        article = _html_article(source, page, link.text)
+        if article is None:
+            no_text += 1
+        else:
+            yield article
+        if level + 1 < source.crawl_depth:
+            queue.extend((found, level + 1) for found in article_links(page.body, page.final_url))
+
+    if no_text:
+        progress.event(
+            "warning", f"{no_text} linked pages had no article text and were not stored.",
+        )
+    if disallowed:
+        progress.event(
+            "info", f"{disallowed} linked pages were skipped because robots.txt disallows them.",
+        )
+
+
+def _html_candidates(
+    source: Source, fetcher, progress: _progress.NullProgress,
+) -> Iterator[_Article]:
+    from crawler.fetchers.browser import PageLoader
+
+    loader = PageLoader(fetcher, on_warning=lambda message: progress.event("warning", message))
+    try:
+        progress.stage(f"Fetching {source.url}")
+        landing = loader.load(source.url)
+        if landing.status_code >= 400:
+            log.warning("pipeline.fetch_error", source=source.name, status=landing.status_code)
+            raise RuntimeError(f"HTTP {landing.status_code} fetching {source.url}")
+        if source.crawl_depth <= 1:
+            yield from _single_page_candidates(source, landing, progress)
+        else:
+            yield from _followed_candidates(source, loader, fetcher, landing, progress)
+    finally:
+        loader.close()
+
+
+# ---------------------------------------------------------------------------
 # EIOS candidates
 # ---------------------------------------------------------------------------
 
@@ -156,6 +306,8 @@ _EIOS_FULLTEXT_MAX_MISSES = 3
 _LINK_FETCH_TIMEOUT = 20.0
 _LINK_RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 _LINK_RETRY_DELAY_SECONDS = 1.0
+
+NO_ARTICLE_TEXT = "no article text found on page"
 
 
 def _join_text(*parts: str | None) -> str:
@@ -203,7 +355,7 @@ def _fetch_original_page(link: str) -> tuple[ExtractedContent | None, str]:
                 if "pdf" in content_type:
                     return None, "PDF (not extracted)"
                 content = extract_html(result.body, url=result.final_url)
-                return content, "" if content.body else "no article text found on page"
+                return content, "" if content.body else NO_ARTICLE_TEXT
             reason = f"HTTP {result.status_code}"
             retry = result.status_code in _LINK_RETRY_STATUSES
         if not retry or attempt == 2:
@@ -211,6 +363,19 @@ def _fetch_original_page(link: str) -> tuple[ExtractedContent | None, str]:
         time.sleep(_LINK_RETRY_DELAY_SECONDS)
     log.warning("link_fetch_failed", url=link, reason=reason)
     return None, reason
+
+
+def render_original_page(link: str, loader) -> tuple[ExtractedContent | None, str]:
+    """Like _fetch_original_page, for a page that only has text once rendered."""
+    from crawler.extractors.base import extract_html
+
+    result = loader.render(link)
+    if result is None:
+        return None, "page could not be rendered"
+    if result.status_code >= 400:
+        return None, f"HTTP {result.status_code}"
+    content = extract_html(result.body, url=result.final_url)
+    return content, "" if content.body else NO_ARTICLE_TEXT
 
 
 class _EIOSFullText:
@@ -569,13 +734,16 @@ def run_for_source(source_id: int, progress: _progress.NullProgress | None = Non
         if source.content_type == Source.ContentType.EIOS:
             # Streamed: each article is processed as soon as its page is read.
             candidates = _eios_candidates(source, fetcher, fetched_at, progress)
+        elif source.content_type == Source.ContentType.HTML:
+            # Streamed too: a list page's articles are read one at a time.
+            candidates = _html_candidates(source, fetcher, progress)
         else:
             progress.stage(f"Fetching {source.url}")
             result = fetcher.fetch(source.url)
             if result.status_code >= 400:
                 bound.warning("pipeline.fetch_error", status=result.status_code)
                 raise RuntimeError(f"HTTP {result.status_code} fetching {source.url}")
-            extracted = _extract_candidates(source, result)
+            extracted = _feed_candidates(source, result)
             candidates = _unseen(source, extracted)
             skipped = len(extracted) - len(candidates)
             bound.info("pipeline.candidates", count=len(candidates), already_stored=skipped)
@@ -608,7 +776,7 @@ def run_for_source(source_id: int, progress: _progress.NullProgress | None = Non
             progress.article(outcome)
     finally:
         if hasattr(candidates, "close"):
-            candidates.close()  # stopped mid-stream: shut down the EIOS link-fetch pool
+            candidates.close()  # stopped mid-stream: shut down the link-fetch pool or browser
         if hasattr(fetcher, "close"):
             fetcher.close()
 

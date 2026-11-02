@@ -44,7 +44,8 @@ class Source(models.Model):
     )
     crawl_depth = models.PositiveSmallIntegerField(
         default=1,
-        help_text="Link-follow depth. 1 = landing page only.",
+        help_text="1 = this URL is a single article. 2 = this URL is a list of articles, "
+                  "so follow its links. 3 = also follow links found on those pages.",
     )
     keyword_filter_overrides = models.JSONField(
         null=True,

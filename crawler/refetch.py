@@ -28,7 +28,16 @@ from django.utils import timezone
 
 from crawler.dedup import content_hash as _ch
 from crawler.extractors.base import ExtractedContent, parse_published
-from crawler.pipeline import _detect_language, _fetch_original_page, _join_text, eios_match_text
+from crawler.fetchers.browser import PageLoader
+from crawler.fetchers.html import HTMLFetcher
+from crawler.pipeline import (
+    NO_ARTICLE_TEXT,
+    _detect_language,
+    _fetch_original_page,
+    _join_text,
+    eios_match_text,
+    render_original_page,
+)
 from raw_content.models import RawArticle
 from sources.models import Source
 
@@ -82,17 +91,44 @@ def refetch_articles(article_ids) -> dict[int, RefetchResult]:
 
     urls = dict(RawArticle.objects.filter(pk__in=article_ids).values_list("pk", "url"))
     workers = max(1, min(settings.EIOS_LINK_FETCH_WORKERS, len(set(urls.values()))))
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        pages = {url: pool.submit(_fetch_original_page, url) for url in set(urls.values())}
-        return {pk: refetch_article(pk, page=pages[url].result()) for pk, url in urls.items()}
+    loader = PageLoader(HTMLFetcher())  # one browser for any pages that need it
+    try:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            pages = {url: pool.submit(_fetch_original_page, url) for url in set(urls.values())}
+            return {
+                pk: refetch_article(pk, page=pages[url].result(), loader=loader)
+                for pk, url in urls.items()
+            }
+    finally:
+        loader.close()
+
+
+def _read_page(
+    article: RawArticle,
+    page: tuple[ExtractedContent | None, str] | None,
+    loader: PageLoader | None,
+) -> tuple[ExtractedContent | None, str]:
+    """The article's page, rendered in a browser if an HTML source's page has no text."""
+    content, reason = page if page is not None else _fetch_original_page(article.url)
+    if reason != NO_ARTICLE_TEXT or article.source.content_type != Source.ContentType.HTML:
+        return content, reason
+    if loader is not None:
+        return render_original_page(article.url, loader)
+    own_loader = PageLoader(HTMLFetcher())
+    try:
+        return render_original_page(article.url, own_loader)
+    finally:
+        own_loader.close()
 
 
 def refetch_article(
-    article_id: int, page: tuple[ExtractedContent | None, str] | None = None,
+    article_id: int,
+    page: tuple[ExtractedContent | None, str] | None = None,
+    loader: PageLoader | None = None,
 ) -> RefetchResult:
     """Refetch one article; `page` is an already fetched _fetch_original_page result."""
     article = RawArticle.objects.select_related("source").get(pk=article_id)
-    content, reason = page if page is not None else _fetch_original_page(article.url)
+    content, reason = _read_page(article, page, loader)
     page_text = content.body if content else ""
 
     metadata = dict(article.metadata or {})
