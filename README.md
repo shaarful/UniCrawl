@@ -2,7 +2,7 @@
 
 UniCrawl is the autonomous ingestion component of the **Regional Zoonotic Disease Observatory and Early Warning System (RZDO-EWS)**. It crawls administrator-configured open-source URLs — news portals, RSS feeds, government health bulletins, and social-media APIs — filters content against an active disease keyword list, and hands matched articles to a downstream LLM extraction pipeline within 60 seconds.
 
-This service covers **FR-07 through FR-14** of the RZDO-EWS SRS (v1.5). All other microservices (LLM extraction, validation/moderation, analytics, dashboard) are out of scope here.
+This service covers **FR-07 through FR-14** of the RZDO-EWS SRS (v1.5), plus LLM extraction in the `llm` app, which runs as its own worker process. All other microservices (validation/moderation, analytics, dashboard) are out of scope here.
 
 ---
 
@@ -240,6 +240,25 @@ Appends keyword-matched articles to a **Redis Stream** (`LLM_QUEUE_NAME`, defaul
 
 A `redis.RedisError` propagates unchanged so the pipeline leaves the article in `matched` state for a future retry.
 
+### 9. LLM Extraction Worker (`llm/`)
+
+`manage.py run_llm_worker` reads the stream above as the consumer group `LLM_CONSUMER_GROUP`, sends each article to Gemini on Vertex AI (`llm/gemini.py`) and stores the result as an `ArticleExtraction` with one `ExtractedEvent` per disease and place. Results are visible in the Django admin. An article that reports no disease occurrence is stored with `is_disease_event=False` and no events.
+
+The dependency is one-way: `llm` reads `raw_content`, and nothing in the crawler imports `llm`. The two communicate only through the stream, so crawling continues if the worker is down, and articles wait in the stream until it returns.
+
+**Delivery:** at-least-once. A message is acknowledged only after its result is committed. Results are replaced per article, and input already extracted with the same model and prompt version is not sent to Gemini again. Finished messages are deleted from the stream to keep full article bodies out of Redis, which assumes this consumer group is the stream's only reader.
+
+| Failure | What happens |
+|---|---|
+| Malformed message, or its article no longer exists | Moved straight to the dead-letter stream |
+| Article-specific (HTTP 400, or no valid output, e.g. a safety block) | Retried after `LLM_CLAIM_IDLE_SECONDS`; moved to the dead-letter stream after `LLM_MAX_ATTEMPTS` |
+| Outage (Gemini 401/403/404/429/5xx, network, credentials, Redis, database) | The worker backs off from 5 s up to 5 min. Nothing counts against the article, so an outage cannot empty the queue |
+| Worker crash mid-article | The unfinished message is reclaimed after `LLM_CLAIM_IDLE_SECONDS` |
+
+The dead-letter stream (`LLM_DEAD_LETTER_QUEUE_NAME`) holds the original fields plus `failed_message_id` and `failure_reason`.
+
+**Changing the prompt or schema:** bump `PROMPT_VERSION` in `llm/gemini.py`, so that articles sent again are re-extracted instead of skipped.
+
 ---
 
 ## Full Crawl Workflow
@@ -386,6 +405,28 @@ DiseaseKeyword
     unique_together: (keyword, language)
 ```
 
+### ArticleExtraction and ExtractedEvent (`llm/models.py`)
+
+```
+ArticleExtraction
+├── article            OneToOneField(RawArticle)
+├── status             CharField — retrying | completed | failed
+├── is_disease_event   BooleanField (null until completed)
+├── input_hash         CharField(64) — model + prompt version + article text
+├── stream_message_id  CharField(32) — message that produced the stored events
+├── attempts, error    article-specific failures for this input
+├── llm_model, prompt_version, prompt_tokens, response_tokens
+├── input_truncated    BooleanField — body exceeded LLM_MAX_INPUT_CHARS
+└── raw_response       TextField — the model's output, for audit
+
+ExtractedEvent (fields provisional until TBD-03)
+├── extraction         ForeignKey(ArticleExtraction)
+├── disease            CharField(255, db_index) — English, lowercase
+├── country            CharField(255, db_index) — English, blank if unknown
+├── location           CharField(255) — blank if unknown
+└── number_of_cases    PositiveBigIntegerField (null if not stated)
+```
+
 ---
 
 ## Tech Stack
@@ -421,6 +462,16 @@ All settings are environment-variable-driven via `django-environ`. Copy `.env.ex
 | `CELERY_BROKER_URL` | `memory://` | Celery message broker |
 | `CELERY_RESULT_BACKEND` | `cache+memory://` | Celery result store |
 | `LLM_QUEUE_NAME` | `unicrawl.matched_articles` | Redis Stream key for LLM handoff |
+| `LLM_DEAD_LETTER_QUEUE_NAME` | `<LLM_QUEUE_NAME>.dead` | Stream for messages that could not be extracted |
+| `LLM_CONSUMER_GROUP` | `llm-extraction` | Redis consumer group of the LLM worker |
+| `RZDO_GCP_PROJECT` | *(required by the worker)* | Google Cloud project for Vertex AI |
+| `RZDO_GCP_CREDENTIALS` | *(required by the worker)* | Path to the service account key, kept outside the repo |
+| `LLM_MODEL` | `gemini-3.5-flash-lite` | Gemini model |
+| `LLM_GCP_LOCATION` | `global` | Vertex AI location |
+| `LLM_MAX_ATTEMPTS` | `3` | Article-specific failures before dead-lettering |
+| `LLM_MAX_INPUT_CHARS` | `50000` | Longer bodies are truncated before being sent to the model |
+| `LLM_REQUEST_TIMEOUT_SECONDS` | `120` | Timeout of one Gemini request |
+| `LLM_CLAIM_IDLE_SECONDS` | `300` | Wait before retrying an unfinished message; keep above the request timeout |
 | `CRAWLER_DEFAULT_INTERVAL_SECONDS` | `3600` | Default per-source crawl interval |
 | `CRAWLER_RETRY_BACKOFF_MINUTES` | `1,4,16` | FR-14 retry intervals (comma-separated) |
 | `CRAWLER_SEMANTIC_DEDUP_ENABLED` | `False` | Enable Layer 3 semantic dedup (requires sentence-transformers + ~2 GB PyTorch) |
@@ -593,7 +644,19 @@ pipenv run celery -A unicrawl worker -l info
 pipenv run celery -A unicrawl beat -l info
 ```
 
-With all three running, Beat automatically enqueues any source whose `next_crawl_at ≤ now` every 30 seconds. The worker picks them up and runs the full pipeline. Keyword-matched articles are pushed onto the `unicrawl.matched_articles` Redis Stream for the downstream LLM service.
+With all three running, Beat automatically enqueues any source whose `next_crawl_at ≤ now` every 30 seconds. The worker picks them up and runs the full pipeline. Keyword-matched articles are pushed onto the `unicrawl.matched_articles` Redis Stream for the LLM worker.
+
+**LLM extraction** runs as a separate process. Set `RZDO_GCP_PROJECT` and `RZDO_GCP_CREDENTIALS`, then:
+
+```powershell
+# Terminal 4 — LLM worker (run more copies to process faster)
+pipenv run python manage.py run_llm_worker
+
+# Or process what is ready now and exit
+pipenv run python manage.py run_llm_worker --once
+```
+
+The worker needs Redis 6.2+ (for `XAUTOCLAIM`). Each article sent to Gemini costs about 500 input tokens for the instructions, plus the article text.
 
 **Health check endpoint:** `GET /health/` returns `{"status": "ok"}` — used by Kubernetes liveness/readiness probes.
 
@@ -630,6 +693,8 @@ pipenv run pytest --cov=crawler --cov=sources --cov=raw_content
 | `test_eios_boards.py` | Adding EIOS boards from the dashboard: by ID or URL, duplicate/invalid rejection |
 | `test_crawl_runs.py` | Crawl run progress counters, stop requests, one-run-per-source, stale-run detection, dashboard views |
 | `test_semantic_dedup.py` | Cosine math, embedding computation, DB duplicate detection, pipeline integration |
+| `test_llm_gemini.py` | Gemini response mapping, schema config, truncation, article-error vs. outage classification |
+| `test_llm_worker.py` | Storing results, redelivery, retries, dead-lettering, outage back-off, consumer group recovery |
 
 ---
 

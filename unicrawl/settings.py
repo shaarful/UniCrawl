@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     "crawler.apps.CrawlerConfig",
     "health.apps.HealthConfig",
     "disease_keywords.apps.DiseaseKeywordsConfig",
+    "llm.apps.LlmConfig",
 ]
 
 MIDDLEWARE = [
@@ -117,6 +118,17 @@ CRAWLER_SEMANTIC_MODEL = env("CRAWLER_SEMANTIC_MODEL")
 CRAWLER_SEMANTIC_MAX_CANDIDATES = env("CRAWLER_SEMANTIC_MAX_CANDIDATES")
 
 LLM_QUEUE_NAME = env("LLM_QUEUE_NAME", default="unicrawl.matched_articles")
+LLM_DEAD_LETTER_QUEUE_NAME = env("LLM_DEAD_LETTER_QUEUE_NAME", default=f"{LLM_QUEUE_NAME}.dead")
+LLM_CONSUMER_GROUP = env("LLM_CONSUMER_GROUP", default="llm-extraction")
+LLM_MODEL = env("LLM_MODEL", default="gemini-3.5-flash-lite")
+LLM_GCP_LOCATION = env("LLM_GCP_LOCATION", default="global")
+RZDO_GCP_PROJECT = env("RZDO_GCP_PROJECT", default="")
+RZDO_GCP_CREDENTIALS = env("RZDO_GCP_CREDENTIALS", default="")
+LLM_MAX_ATTEMPTS = env.int("LLM_MAX_ATTEMPTS", default=3)
+LLM_MAX_INPUT_CHARS = env.int("LLM_MAX_INPUT_CHARS", default=50_000)
+LLM_REQUEST_TIMEOUT_SECONDS = env.int("LLM_REQUEST_TIMEOUT_SECONDS", default=120)
+# Must stay above the request timeout, or a message still in progress can be reclaimed.
+LLM_CLAIM_IDLE_SECONDS = env.int("LLM_CLAIM_IDLE_SECONDS", default=300)
 
 EIOS_API_BASE_URL = env("EIOS_API_BASE_URL", default="")
 EIOS_API_VERSION = env("EIOS_API_VERSION", default="1.0")

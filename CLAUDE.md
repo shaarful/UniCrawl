@@ -6,7 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 UniCrawl is the **universal web crawler** component of the **Regional Zoonotic Disease Observatory and Early Warning System (RZDO-EWS)** described in `srs/RZDO_EWS_SRS_v1.5.docx`. It autonomously collects disease-related content from administrator-defined open-source URLs (news portals, RSS feeds, government health bulletins, social media APIs) and forwards keyword-matched content to a downstream LLM extraction pipeline.
 
-The Crawler Service is one of five microservices in the broader RZDO-EWS architecture. **In scope here is only the crawler** — LLM extraction, validation/moderation, analytics, and the dashboard are separate services and not implemented in this repo.
+The Crawler Service is one of five microservices in the broader RZDO-EWS architecture. **In scope here are the crawler and LLM extraction** — validation/moderation, analytics, and the dashboard are separate services and not implemented in this repo.
+
+LLM extraction lives in the `llm` app by deliberate choice (the SRS lists it as a separate service, and the SRS is to be updated to match). Keep it easy to split out later: it runs as its own process (`manage.py run_llm_worker`), gets articles only through the Redis stream, and the dependency stays one-way, so `crawler` must never import `llm`.
 
 The SRS is the authoritative requirements document. Read it (`srs/RZDO_EWS_SRS_v1.5.docx`) before making architectural decisions. The crawler-specific requirements are FR-07 through FR-14 in §3.2.
 
