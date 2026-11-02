@@ -52,7 +52,7 @@ def test_missing_configuration_fails_fast(settings, project, key):
 def test_extract_returns_events_and_usage(extractor):
     parsed = Extraction(
         is_disease_event=True,
-        events=[Event(disease="anthrax", country="Bangladesh", number_of_cases=12)],
+        events=[Event(disease="anthrax", country="Bangladesh", confirmed_case_count=12)],
         summary="Twelve anthrax cases.",
     )
     extractor.generate.return_value = _response(parsed, text='{"is_disease_event": true}')
@@ -179,9 +179,62 @@ def test_prompt_asks_for_a_grounded_summary_of_the_required_length(extractor):
     extractor.extract("Title", "Body")
 
     instruction = extractor.generate.call_args.kwargs["config"].system_instruction
-    assert "100 to 200 words" in instruction
-    assert "Use only facts stated in the" in instruction
+    assert "at most 100 words" in instruction
+    assert "Use only facts stated in the article" in instruction
     assert "Never add background" in instruction
+
+
+def test_prompt_forbids_guessing_absent_fields(extractor):
+    extractor.generate.return_value = _response(Extraction(is_disease_event=False, summary="x"))
+
+    extractor.extract("Title", "Body")
+
+    instruction = extractor.generate.call_args.kwargs["config"].system_instruction
+    assert "Use null for anything the article does not state" in instruction
+    assert "Never look them up" in instruction
+
+
+def test_publication_date_is_sent_for_working_out_relative_dates(extractor):
+    extractor.generate.return_value = _response(Extraction(is_disease_event=False, summary="x"))
+
+    extractor.extract("Title", "Body", "2026-10-27T08:00:00+00:00")
+
+    contents = extractor.generate.call_args.kwargs["contents"]
+    assert "Publication date: 2026-10-27 (Tuesday)" in contents
+
+
+@pytest.mark.parametrize("published_at", ["", "not a date"], ids=["missing", "invalid"])
+def test_unknown_publication_date_says_so(extractor, published_at):
+    extractor.generate.return_value = _response(Extraction(is_disease_event=False, summary="x"))
+
+    extractor.extract("Title", "Body", published_at)
+
+    assert "Publication date: unknown" in extractor.generate.call_args.kwargs["contents"]
+
+
+def test_every_fr09_event_field_is_optional_except_disease():
+    event = Event(disease="rabies")
+
+    values = event.model_dump(exclude={"disease"})
+
+    assert values and all(value is None for value in values.values())
+    with pytest.raises(ValidationError):
+        Event()
+
+
+@pytest.mark.parametrize("value", ["not a date", "27 October 2026", 20261027, ""])
+def test_a_bad_date_counts_as_not_stated_without_failing_the_article(value):
+    assert Event(disease="rabies", event_date=value).event_date is None
+
+
+def test_a_valid_date_is_kept():
+    assert Event(disease="rabies", event_date="2026-10-27").event_date == "2026-10-27"
+
+
+def test_location_type_only_allows_the_srs_values():
+    assert Event(disease="rabies", location_type="wildlife_habitat").location_type
+    with pytest.raises(ValidationError):
+        Event(disease="rabies", location_type="hospital")
 
 
 def test_prompt_asks_for_a_full_english_translation(extractor):

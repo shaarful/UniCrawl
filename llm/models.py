@@ -34,8 +34,19 @@ class ArticleExtraction(models.Model):
     )
     summary = models.TextField(
         blank=True,
-        help_text="English summary of the article, 100-200 words (FR-16); "
+        help_text="English summary of the article, at most 100 words (FR-10); "
                   "empty until an extraction has completed.",
+    )
+    reporter_author = models.CharField(
+        max_length=512,
+        blank=True,
+        help_text="Reporter named in the text; the crawler's byline takes precedence.",
+    )
+    author_affiliation = models.CharField(max_length=512, blank=True)
+    publication_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Date stated in the text; the crawler's date takes precedence.",
     )
     translated_title = models.TextField(
         blank=True,
@@ -82,7 +93,18 @@ class ArticleExtraction(models.Model):
 
 
 class ExtractedEvent(models.Model):
-    """One disease occurrence reported by an article (fields per TBD-03)."""
+    """One disease occurrence reported by an article (FR-09).
+
+    Every field except disease is optional: articles rarely state them all, and
+    what an article does not state stays empty rather than being guessed.
+    """
+
+    class LocationType(models.TextChoices):
+        COMMUNITY = "community", "Community"
+        FARM = "farm", "Farm"
+        MARKET = "market", "Market"
+        SLAUGHTERHOUSE = "slaughterhouse", "Slaughterhouse"
+        WILDLIFE_HABITAT = "wildlife_habitat", "Wildlife habitat"
 
     extraction = models.ForeignKey(
         ArticleExtraction,
@@ -90,13 +112,71 @@ class ExtractedEvent(models.Model):
         related_name="events",
     )
     disease = models.CharField(max_length=255, db_index=True)
+    host = models.CharField(max_length=255, blank=True, db_index=True)
+    affected_population_size = models.PositiveBigIntegerField(null=True, blank=True)
+
     country = models.CharField(max_length=255, blank=True, db_index=True)
-    location = models.CharField(max_length=255, blank=True)
-    number_of_cases = models.PositiveBigIntegerField(null=True, blank=True)
+    division = models.CharField(max_length=255, blank=True)
+    district = models.CharField(max_length=255, blank=True)
+    village = models.CharField(max_length=255, blank=True)
+    latitude = models.FloatField(
+        null=True, blank=True, help_text="Only when printed in the article; no geocoding yet.",
+    )
+    longitude = models.FloatField(
+        null=True, blank=True, help_text="Only when printed in the article; no geocoding yet.",
+    )
+    location_type = models.CharField(max_length=20, choices=LocationType.choices, blank=True)
+
+    event_date = models.DateField(null=True, blank=True, db_index=True)
+    confirmed_case_count = models.PositiveBigIntegerField(null=True, blank=True)
+    suspected_case_count = models.PositiveBigIntegerField(null=True, blank=True)
+    fatality_count = models.PositiveBigIntegerField(null=True, blank=True)
+
+    response_action = models.TextField(blank=True)
+    responding_authority = models.CharField(max_length=255, blank=True)
 
     class Meta:
         ordering = ["id"]
 
     def __str__(self) -> str:
-        place = self.location or self.country or "unknown location"
-        return f"{self.disease} in {place}"
+        place = self.village or self.district or self.division or self.country
+        return f"{self.disease} in {place or 'unknown location'}"
+
+    def as_record(self) -> dict:
+        """The FR-09 record: LLM fields plus the crawler's, with null where absent.
+
+        Where both have a value, the crawler's wins, because it comes from the
+        page's metadata rather than from reading the text.
+        """
+        extraction = self.extraction
+        article = extraction.article
+        published = article.published_at.date() if article.published_at else (
+            extraction.publication_date
+        )
+        return {
+            "disease_name": self.disease,
+            "host": self.host or None,
+            "affected_population_size": self.affected_population_size,
+            "country": self.country or None,
+            "division": self.division or None,
+            "district": self.district or None,
+            "village": self.village or None,
+            "latitude": self.latitude,
+            "longitude": self.longitude,
+            "location_type": self.location_type or None,
+            "event_date": self.event_date.isoformat() if self.event_date else None,
+            "publication_date": published.isoformat() if published else None,
+            "confirmed_case_count": self.confirmed_case_count,
+            "suspected_case_count": self.suspected_case_count,
+            "fatality_count": self.fatality_count,
+            "source_url": article.final_url or article.url,
+            "source_name": article.source_name or None,
+            "source_type": article.source_type or None,
+            "source_language": article.language or None,
+            "reporter_author": article.author or extraction.reporter_author or None,
+            "author_affiliation": extraction.author_affiliation or None,
+            # Needs the event grouping in FR-17; one article cannot tell.
+            "corroborating_sources_count": None,
+            "response_action": self.response_action or None,
+            "responding_authority": self.responding_authority or None,
+        }

@@ -1,6 +1,8 @@
+import json
+
 import redis
 from django.contrib import admin, messages
-from django.utils.html import format_html_join
+from django.utils.html import format_html
 
 from raw_content.admin import RawArticleAdmin
 from raw_content.models import RawArticle
@@ -17,7 +19,7 @@ class ArticleExtractionInline(admin.StackedInline):
     verbose_name = "LLM result"
     verbose_name_plural = "LLM result"
     fields = readonly_fields = (
-        "status", "is_disease_event", "extracted_events", "summary", "translated_title",
+        "status", "is_disease_event", "summary", "extracted_events", "translated_title",
         "translated_body", "input_truncated", "attempts", "error", "llm_model",
         "prompt_version", "prompt_tokens", "response_tokens", "updated_at",
     )
@@ -25,14 +27,15 @@ class ArticleExtractionInline(admin.StackedInline):
     def has_add_permission(self, request, obj=None):
         return False
 
-    @admin.display(description="Extracted events")
+    @admin.display(description="Extracted events (FR-09 records)")
     def extracted_events(self, obj: ArticleExtraction):
-        rows = [
-            (event.disease, event.country or "–", event.location or "–",
-             "–" if event.number_of_cases is None else event.number_of_cases)
-            for event in obj.events.all()
-        ]
-        return format_html_join("\n", "<div>{} | {} | {} | {} cases</div>", rows) or "–"
+        records = [event.as_record() for event in obj.events.all()]
+        if not records:
+            return "–"
+        return format_html(
+            '<pre style="white-space: pre-wrap; margin: 0">{}</pre>',
+            json.dumps(records, indent=2, ensure_ascii=False),
+        )
 
 
 class RawArticleLlmAdmin(RawArticleAdmin):
@@ -76,7 +79,11 @@ class ExtractedEventInline(admin.TabularInline):
     model = ExtractedEvent
     extra = 0
     can_delete = False
-    readonly_fields = ("disease", "country", "location", "number_of_cases")
+    fields = readonly_fields = (
+        "disease", "host", "country", "division", "district", "village", "location_type",
+        "event_date", "confirmed_case_count", "suspected_case_count", "fatality_count",
+        "affected_population_size", "response_action", "responding_authority",
+    )
 
     def has_add_permission(self, request, obj=None):
         return False
@@ -102,10 +109,11 @@ class ArticleExtractionAdmin(admin.ModelAdmin):
 
 @admin.register(ExtractedEvent)
 class ExtractedEventAdmin(admin.ModelAdmin):
-    list_display = ("disease", "country", "location", "number_of_cases", "extraction")
-    list_filter = ("disease", "country")
+    list_display = ("disease", "host", "country", "district", "event_date",
+                    "confirmed_case_count", "suspected_case_count", "fatality_count", "extraction")
+    list_filter = ("disease", "host", "country", "location_type")
     list_select_related = ("extraction",)
-    search_fields = ("disease", "country", "location")
+    search_fields = ("disease", "host", "country", "division", "district", "village")
 
     def has_add_permission(self, request):
         return False

@@ -242,7 +242,9 @@ A `redis.RedisError` propagates unchanged so the pipeline leaves the article in 
 
 ### 9. LLM Extraction Worker (`llm/`)
 
-`manage.py run_llm_worker` reads the stream above as the consumer group `LLM_CONSUMER_GROUP`, sends each article to Gemini on Vertex AI (`llm/gemini.py`) and stores the result as an `ArticleExtraction` with one `ExtractedEvent` per disease and place. Results are visible in the Django admin. An article that reports no disease occurrence is stored with `is_disease_event=False` and no events. Every processed article gets a 100–200 word English `summary` (FR-16), or less if the article is too short. Non-English articles also get a full English translation in `translated_title` and `translated_body`, whether or not they are relevant, so a reviewer can check the decision. Translation output is roughly as long as the article, so it adds to the token cost.
+`manage.py run_llm_worker` reads the stream above as the consumer group `LLM_CONSUMER_GROUP`, sends each article to Gemini on Vertex AI (`llm/gemini.py`) and stores the result as an `ArticleExtraction` with one `ExtractedEvent` per disease and place. Results are visible in the Django admin. An article that reports no disease occurrence is stored with `is_disease_event=False` and no events. Each event holds the FR-09 fields (SRS v1.13). Articles rarely state them all, so anything not stated stays null rather than being guessed. `ExtractedEvent.as_record()` returns the full FR-09 record, combining the LLM's fields with the crawler's, and the crawler's value wins where both exist. Lat/Lon is filled only when the article prints coordinates, because there is no geocoder yet, and Corroborating Sources Count stays null until event grouping (FR-17) exists.
+
+Every processed article gets an English `summary` of at most 100 words (FR-10). Non-English articles also get a full English translation in `translated_title` and `translated_body`, whether or not they are relevant, so a reviewer can check the decision. Translation output is roughly as long as the article, so it adds to the token cost.
 
 **From the admin:**
 - **Process with LLM** (article page and run page): sends the stored text to Gemini immediately, without Redis or the worker, and replaces any earlier result. To use the page's latest text, click **Refetch** first.
@@ -416,7 +418,8 @@ ArticleExtraction
 ├── article            OneToOneField(RawArticle)
 ├── status             CharField — retrying | completed | failed
 ├── is_disease_event   BooleanField (null until completed)
-├── summary            TextField — English, 100–200 words (FR-16)
+├── summary            TextField — English, at most 100 words (FR-10)
+├── reporter_author, author_affiliation, publication_date   from the text
 ├── translated_title, translated_body   TextField — English; blank if already English
 ├── input_hash         CharField(64) — model + prompt version + article text
 ├── stream_message_id  CharField(32) — message that produced the stored events
@@ -425,12 +428,18 @@ ArticleExtraction
 ├── input_truncated    BooleanField — body exceeded LLM_MAX_INPUT_CHARS
 └── raw_response       TextField — the model's output, for audit
 
-ExtractedEvent (fields provisional until TBD-03)
+ExtractedEvent (FR-09; only disease is required)
 ├── extraction         ForeignKey(ArticleExtraction)
 ├── disease            CharField(255, db_index) — English, lowercase
-├── country            CharField(255, db_index) — English, blank if unknown
-├── location           CharField(255) — blank if unknown
-└── number_of_cases    PositiveBigIntegerField (null if not stated)
+├── host               CharField(255, db_index)
+├── affected_population_size   PositiveBigIntegerField (null)
+├── country, division, district, village   CharField(255) — English
+├── latitude, longitude   FloatField (null) — only if printed in the article
+├── location_type      community | farm | market | slaughterhouse | wildlife_habitat
+├── event_date         DateField (null, db_index)
+├── confirmed_case_count, suspected_case_count, fatality_count   PositiveBigIntegerField (null)
+├── response_action    TextField
+└── responding_authority   CharField(255)
 ```
 
 ---
@@ -662,7 +671,7 @@ pipenv run python manage.py run_llm_worker
 pipenv run python manage.py run_llm_worker --once
 ```
 
-The worker needs Redis 6.2+ (for `XAUTOCLAIM`). Each article sent to Gemini costs about 500 input tokens for the instructions, plus the article text.
+The worker needs Redis 6.2+ (for `XAUTOCLAIM`). Each article sent to Gemini costs about 1,700 input tokens for the instructions and schema, plus the article text.
 
 **Health check endpoint:** `GET /health/` returns `{"status": "ok"}` — used by Kubernetes liveness/readiness probes.
 

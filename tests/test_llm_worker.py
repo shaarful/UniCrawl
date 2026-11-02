@@ -63,7 +63,8 @@ def _result(*diseases, is_event=True):
         extraction=Extraction(
             is_disease_event=is_event,
             events=[
-                Event(disease=d, country="Bangladesh", location="Sirajganj", number_of_cases=12)
+                Event(disease=d, country="Bangladesh", district="Sirajganj",
+                      confirmed_case_count=12)
                 for d in diseases
             ],
             summary="  Summary of the article.  ",
@@ -93,7 +94,7 @@ def test_success_stores_events_then_acks_and_deletes(article):
     assert extraction.is_disease_event is True
     assert (extraction.prompt_tokens, extraction.response_tokens) == (11, 7)
     event = extraction.events.get()
-    assert (event.disease, event.country, event.location, event.number_of_cases) == (
+    assert (event.disease, event.country, event.district, event.confirmed_case_count) == (
         "anthrax", "Bangladesh", "Sirajganj", 12,
     )
     pipe = worker.client.pipeline.return_value
@@ -123,6 +124,123 @@ def test_message_is_not_acked_if_saving_fails(article):
         worker._handle("1-0", _fields(article))
 
     assert not worker.client.pipeline.called
+
+
+def test_all_fr09_event_fields_are_stored(article):
+    result = _result()
+    result.extraction.events = [Event(
+        disease="Nipah",
+        host="humans",
+        affected_population_size=214,
+        country="India",
+        division="Kerala",
+        district="Kozhikode",
+        village="Maruthonkara",
+        latitude=11.6,
+        longitude=75.8,
+        location_type="community",
+        event_date="2026-10-26",
+        confirmed_case_count=3,
+        suspected_case_count=18,
+        fatality_count=1,
+        response_action="Containment zones declared",
+        responding_authority="Kerala Health Department",
+    )]
+    worker = _worker(extract=[result])
+
+    worker._handle("1-0", _fields(article))
+
+    event = ExtractedEvent.objects.get()
+    assert event.host == "humans"
+    assert event.affected_population_size == 214
+    assert (event.division, event.district, event.village) == (
+        "Kerala", "Kozhikode", "Maruthonkara",
+    )
+    assert (event.latitude, event.longitude) == (11.6, 75.8)
+    assert event.location_type == "community"
+    assert event.event_date.isoformat() == "2026-10-26"
+    assert (event.confirmed_case_count, event.suspected_case_count, event.fatality_count) == (
+        3, 18, 1,
+    )
+    assert event.response_action == "Containment zones declared"
+    assert event.responding_authority == "Kerala Health Department"
+
+
+def test_absent_fields_stay_empty(article):
+    result = _result()
+    result.extraction.events = [Event(disease="rabies")]
+    worker = _worker(extract=[result])
+
+    worker._handle("1-0", _fields(article))
+
+    record = ExtractedEvent.objects.get().as_record()
+    llm_fields = set(record) - {"disease_name", "source_url"}
+    assert all(record[name] is None for name in llm_fields)
+    assert record["disease_name"] == "rabies"
+
+
+def test_publication_date_from_the_message_reaches_the_model(article):
+    worker = _worker(extract=[_result("anthrax")])
+
+    worker._handle("1-0", {**_fields(article), "published_at": "2026-10-27T08:00:00+00:00"})
+
+    worker.extractor.extract.assert_called_once_with(
+        "Title", "Body", "2026-10-27T08:00:00+00:00",
+    )
+
+
+def _record_with(article, **extraction_values):
+    result = _result("anthrax")
+    for name, value in extraction_values.items():
+        setattr(result.extraction, name, value)
+    worker = _worker(extract=[result])
+    worker._handle("1-0", _fields(article))
+    return ExtractedEvent.objects.get().as_record()
+
+
+def test_record_prefers_crawler_values_over_llm_values(article):
+    article.author = "Crawler Byline"
+    article.published_at = timezone.now().replace(year=2026, month=5, day=19)
+    article.source_name = "Daily Health"
+    article.source_type = "html"
+    article.language = "bn"
+    article.final_url = "https://example.com/final"
+    article.save()
+
+    record = _record_with(article, reporter_author="LLM Name", publication_date="2020-01-01")
+
+    assert record["reporter_author"] == "Crawler Byline"
+    assert record["publication_date"] == "2026-05-19"
+    assert record["source_name"] == "Daily Health"
+    assert record["source_type"] == "html"
+    assert record["source_language"] == "bn"
+    assert record["source_url"] == "https://example.com/final"
+
+
+def test_record_falls_back_to_llm_values_when_the_crawler_has_none(article):
+    record = _record_with(
+        article,
+        reporter_author="LLM Name",
+        author_affiliation="Reuters",
+        publication_date="2026-05-19",
+    )
+
+    assert record["reporter_author"] == "LLM Name"
+    assert record["author_affiliation"] == "Reuters"
+    assert record["publication_date"] == "2026-05-19"
+    assert record["source_url"] == article.url
+
+
+def test_record_keeps_a_stated_zero_distinct_from_not_stated(article):
+    result = _result()
+    result.extraction.events = [Event(disease="rabies", fatality_count=0)]
+    worker = _worker(extract=[result])
+
+    worker._handle("1-0", _fields(article))
+
+    record = ExtractedEvent.objects.get().as_record()
+    assert record["fatality_count"] == 0
+    assert record["suspected_case_count"] is None
 
 
 def test_summary_is_stored(article):

@@ -146,7 +146,7 @@ class ExtractionWorker:
             return
 
         try:
-            result = self.extractor.extract(title, body)
+            result = self.extractor.extract(title, body, fields.get("published_at", ""))
         except ArticleError as exc:
             self._on_article_error(message_id, fields, article_id, input_hash, exc)
             return

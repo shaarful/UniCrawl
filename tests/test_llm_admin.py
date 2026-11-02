@@ -41,8 +41,8 @@ def _result():
     return ExtractionResult(
         extraction=Extraction(
             is_disease_event=True,
-            events=[Event(disease="Dengue", country="Bangladesh", location="Dhaka",
-                          number_of_cases=350)],
+            events=[Event(disease="Dengue", country="Bangladesh", district="Dhaka",
+                          confirmed_case_count=350)],
             summary="Dengue cases rose in Dhaka.",
             translated_title="Headline",
             translated_body="Dengue in Dhaka",
@@ -94,7 +94,7 @@ def test_button_stores_the_result_and_reports_it(admin_client, extractor):
     assert extraction.status == ArticleExtraction.Status.COMPLETED
     assert extraction.translated_body == "Dengue in Dhaka"
     assert extraction.events.get().disease == "dengue"
-    extractor.extract.assert_called_once_with(article.title, article.body)
+    extractor.extract.assert_called_once_with(article.title, article.body, "")
     assert response.redirect_chain[-1][0] == _change_url(article)
     html = response.content.decode()
     assert "1 event(s): dengue in Dhaka" in html
@@ -109,7 +109,9 @@ def test_article_page_shows_the_result(admin_client, extractor):
     html = admin_client.get(_change_url(article)).content.decode()
 
     assert "LLM result" in html
-    assert "dengue | Bangladesh | Dhaka | 350 cases" in html
+    assert "&quot;disease_name&quot;: &quot;dengue&quot;" in html
+    assert "&quot;confirmed_case_count&quot;: 350" in html
+    assert "&quot;host&quot;: null" in html
     assert "Dengue cases rose in Dhaka." in html
     assert "Dengue in Dhaka" in html
 
