@@ -17,6 +17,9 @@ MAX_BULK_REFETCH = 100
 class RawArticleAdmin(admin.ModelAdmin):
     actions = ["refetch_from_original_link"]
     list_per_page = 20
+    # "Show all" appears up to this many rows, so a large list must be filtered first:
+    # all 6,454 dev articles took about 4 s to render, and this grows with the row count.
+    list_max_show_all = 10_000
     list_display = (
         "id", "source", "source_name", "processing_status", "is_keyword_matched",
         "is_duplicate", "language", "body_source", "published_at", "fetched_at",

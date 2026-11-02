@@ -279,6 +279,37 @@ def test_article_list_shows_20_per_page(admin_client):
 
 
 @pytest.mark.django_db
+def test_article_list_can_show_all_articles_on_one_page(admin_client):
+    for n in range(21):
+        _article(n)
+
+    assert "Show all" in _list_page(admin_client).content.decode()
+    response = _list_page(admin_client, all="")
+
+    assert len(response.context["cl"].result_list) == 21
+
+
+@pytest.mark.django_db
+def test_show_all_is_offered_for_more_than_the_old_200_row_limit():
+    from django.contrib import admin
+
+    assert admin.site._registry[RawArticle].list_max_show_all == 10_000
+
+
+@pytest.mark.django_db
+def test_show_all_is_not_offered_above_the_limit(admin_client):
+    from django.contrib import admin
+
+    for n in range(21):
+        _article(n)
+
+    with patch.object(admin.site._registry[RawArticle], "list_max_show_all", 20):
+        html = _list_page(admin_client).content.decode()
+
+    assert "Show all" not in html
+
+
+@pytest.mark.django_db
 def test_article_list_can_sort_by_llm_status(admin_client):
     done = _article(1)
     ArticleExtraction.objects.create(
