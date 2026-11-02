@@ -2,7 +2,9 @@
 
 Every successful fetch persists a RawArticle BEFORE any downstream processing.
 Records are immutable after creation — update only processing_status and the
-dedup/match fields as the pipeline progresses.
+dedup/match fields as the pipeline progresses. The one exception is an explicit
+refetch from the original link (crawler.refetch), which may replace the body
+and fill in missing source-stated fields; it is recorded in metadata.
 """
 from __future__ import annotations
 
@@ -68,6 +70,33 @@ class RawArticle(models.Model):
         blank=True,
         help_text="Source-specific provenance (e.g. EIOS id, countries, categories) "
                   "preserved for the LLM extraction service (FR-13, TBD-03).",
+    )
+
+    # --- Source-stated article fields (crawler-extracted; the LLM service
+    # extracts the fields that need reading the text) ---
+    published_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Publication / reporting date stated by the source "
+                  "(page metadata, feed entry or EIOS pubDate).",
+    )
+    author = models.CharField(
+        max_length=512,
+        blank=True,
+        help_text="Reporter / author byline from page or feed metadata.",
+    )
+    source_name = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Publisher of the article (EIOS source name, feed <source>, "
+                  "else the configured source name).",
+    )
+    source_type = models.CharField(
+        max_length=64,
+        blank=True,
+        help_text="Channel type: the source's content type (html, rss, social) "
+                  "or, for EIOS, the publisher type (webnews, wire, socialmedia-…).",
     )
 
     # --- Dedup fingerprints (FR-11, FR-23) ---

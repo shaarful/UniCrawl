@@ -220,3 +220,37 @@ def test_get_client_returns_same_instance_on_repeated_calls():
         mock_from_url.assert_called_once()  # connection created only once
     finally:
         pub_mod._redis = original  # restore original state
+
+
+@pytest.mark.django_db
+def test_publish_matched_payload_carries_source_stated_fields():
+    from datetime import UTC, datetime
+
+    article = _article(_source())
+    article.published_at = datetime(2026, 5, 19, 12, tzinfo=UTC)
+    article.author = "Jane Reporter"
+    article.source_name = "Daily Health Times"
+    article.source_type = "html"
+    article.save()
+    mock_client = _mock_client()
+
+    with patch("crawler.publisher._get_client", return_value=mock_client):
+        publish_matched(article.id)
+
+    fields = mock_client.xadd.call_args.args[1]
+    assert fields["published_at"] == "2026-05-19T12:00:00+00:00"
+    assert fields["author"] == "Jane Reporter"
+    assert fields["source_name"] == "Daily Health Times"
+    assert fields["source_type"] == "html"
+    assert "queued_at" in fields
+
+
+@pytest.mark.django_db
+def test_publish_matched_sends_empty_published_at_when_unknown():
+    article = _article(_source())
+    mock_client = _mock_client()
+
+    with patch("crawler.publisher._get_client", return_value=mock_client):
+        publish_matched(article.id)
+
+    assert mock_client.xadd.call_args.args[1]["published_at"] == ""

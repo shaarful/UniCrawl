@@ -275,3 +275,49 @@ def test_pipeline_does_not_raise_when_article_processing_errors():
 
     source.refresh_from_db()
     assert source.last_crawled_at is not None  # crawl state still updated
+
+
+# ---------------------------------------------------------------------------
+# Source-stated fields (author, publisher, publication date)
+# ---------------------------------------------------------------------------
+
+_RSS_WITH_BYLINE = b"""<?xml version="1.0"?>
+<rss version="2.0">
+<channel>
+  <item>
+    <title>Cholera alert</title>
+    <link>https://example.com/cholera</link>
+    <description>Cholera cases rising.</description>
+    <pubDate>Mon, 19 May 2026 12:00:00 GMT</pubDate>
+    <author>desk@example.com (Health Desk)</author>
+  </item>
+</channel>
+</rss>"""
+
+
+@pytest.mark.django_db
+def test_rss_pipeline_persists_source_stated_fields():
+    from datetime import UTC, datetime
+
+    source = _source(content_type=Source.ContentType.RSS, url="https://example.com/feed.xml")
+    fetcher = _mock_fetcher(_result(source.url, _RSS_WITH_BYLINE))
+    with patch("crawler.pipeline._fetcher_for", return_value=fetcher):
+        run_for_source(source.id)
+
+    article = RawArticle.objects.get()
+    assert article.published_at == datetime(2026, 5, 19, 12, tzinfo=UTC)
+    assert article.author == "Health Desk"
+    assert article.source_name == "Test"  # configured name; the feed names no other publisher
+    assert article.source_type == "rss"
+
+
+@pytest.mark.django_db
+def test_html_pipeline_persists_source_name_and_type():
+    source = _source()
+    fetcher = _mock_fetcher(_result(source.url, _HTML_BODY))
+    with patch("crawler.pipeline._fetcher_for", return_value=fetcher):
+        run_for_source(source.id)
+
+    article = RawArticle.objects.get()
+    assert (article.source_name, article.source_type) == ("Test", "html")
+    assert article.author == ""

@@ -6,12 +6,19 @@ a `<title>` tag scrape when trafilatura yields no title.
 RSS/Atom: feedparser handles both formats. Each entry's `<content>` is preferred
 over `<summary>`/`<description>`. HTML inside feed payloads is stripped to text.
 
+Besides the text, the source-stated byline (author), publisher name and
+publication date are captured from page / feed metadata. These are the
+article fields the crawler supplies itself; everything that needs reading the
+text (disease, host, locations, counts, ...) is left to the LLM service.
+
 Language detection is intentionally left to the pipeline (langdetect on the
 extracted body), to keep extraction deterministic and side-effect-free.
 """
 from __future__ import annotations
 
+import email.utils
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 import feedparser
@@ -25,6 +32,8 @@ class ExtractedContent:
     body: str
     published_at: str | None  # raw string from source; pipeline parses to datetime
     language: str | None
+    author: str | None = None
+    site_name: str | None = None  # publisher name, e.g. og:site_name or an aggregator's <source>
 
 
 @dataclass
@@ -49,11 +58,15 @@ def extract_html(html: bytes, url: str) -> ExtractedContent:
 
     title: str | None = None
     published_at: str | None = None
+    author: str | None = None
+    site_name: str | None = None
     try:
         metadata = trafilatura.extract_metadata(html, default_url=url)
         if metadata is not None:
             title = metadata.title or None
             published_at = metadata.date or None
+            author = metadata.author or None
+            site_name = metadata.sitename or None
     except Exception:
         # trafilatura's metadata extraction is best-effort; never fail the fetch over it.
         pass
@@ -66,6 +79,8 @@ def extract_html(html: bytes, url: str) -> ExtractedContent:
         body=body,
         published_at=published_at,
         language=None,  # filled in by the pipeline via langdetect (FR-12)
+        author=author,
+        site_name=site_name,
     )
 
 
@@ -116,10 +131,20 @@ def _entry_to_item(entry: Any, *, feed_language: str | None) -> FeedItem | None:
         body_text = entry.get("summary", "") or ""
     body_text = _strip_html(body_text)
 
-    published_at = entry.get("published") or entry.get("updated") or None
+    # feedparser normalises the many feed date formats to a UTC struct_time.
+    parsed_date = entry.get("published_parsed") or entry.get("updated_parsed")
+    if parsed_date:
+        published_at = datetime(*parsed_date[:6], tzinfo=UTC).isoformat()
+    else:
+        published_at = entry.get("published") or entry.get("updated") or None
     language = entry.get("language") or feed_language
     if language:
         language = language[:10]
+
+    # RSS 2.0 <author> is "email (Name)"; feedparser splits it into author_detail.
+    author = (entry.get("author_detail") or {}).get("name") or entry.get("author") or None
+    # Aggregator feeds (e.g. Google News) name the actual publisher in <source>.
+    site_name = (entry.get("source") or {}).get("title") or None
 
     return FeedItem(
         url=url,
@@ -128,8 +153,29 @@ def _entry_to_item(entry: Any, *, feed_language: str | None) -> FeedItem | None:
             body=body_text,
             published_at=published_at,
             language=language,
+            author=author,
+            site_name=site_name,
         ),
     )
+
+
+def parse_published(value: str | None) -> datetime | None:
+    """Parse a source-stated date (ISO 8601 or RFC 822) to an aware datetime.
+
+    Best-effort: unparseable values give None. Dates without a time zone,
+    including date-only values, are taken as UTC.
+    """
+    value = (value or "").strip()
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError:
+        try:
+            dt = email.utils.parsedate_to_datetime(value)
+        except (TypeError, ValueError):
+            return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
 def _strip_html(s: str) -> str:

@@ -1,0 +1,29 @@
+{% extends "admin/change_form.html" %}
+
+{% block extrastyle %}
+  {{ block.super }}
+  <style>
+    .object-tools form { display: inline; }
+    .object-tools button.refetchlink {
+      display: block; float: left; padding: 3px 12px; border: 0; border-radius: 15px; cursor: pointer;
+      background: var(--object-tools-bg); color: var(--object-tools-fg); font: inherit;
+      font-weight: 400; font-size: 0.6875rem; text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .object-tools button.refetchlink:hover,
+    .object-tools button.refetchlink:focus { background-color: var(--object-tools-hover-bg); }
+  </style>
+{% endblock %}
+
+{% block object-tools-items %}
+  <li>
+    <form method="post" action="{% url 'crawler:article-refetch' original.pk %}"
+          onsubmit="this.querySelector('button').disabled = true; this.querySelector('button').textContent = 'Refetching…';">
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+      <button type="submit" class="refetchlink"
+              title="Fetch {{ original.url }} again and update the stored text">↻ Refetch from original link</button>
+    </form>
+  </li>
+  <li><a href="{{ original.url }}" target="_blank" rel="noopener">Open original ↗</a></li>
+  {{ block.super }}
+{% endblock %}

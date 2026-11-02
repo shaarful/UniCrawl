@@ -44,11 +44,16 @@ def publish_matched(raw_article_id: int) -> None:
         "body": article.body,
         "language": article.language or "",
         "matched_diseases": json.dumps(article.matched_diseases or []),
+        # Source-stated fields the crawler supplies; "" when the source gave none.
+        "published_at": article.published_at.isoformat() if article.published_at else "",
+        "author": article.author,
+        "source_name": article.source_name,
+        "source_type": article.source_type,
         # Source-specific provenance, e.g. the complete EIOS record (countries,
         # locations, categories, translations) and which body was used.
         "metadata": json.dumps(article.metadata or {}, ensure_ascii=False),
         "fetched_at": article.fetched_at.isoformat(),
-        "published_at": timezone.now().isoformat(),
+        "queued_at": timezone.now().isoformat(),
     }
 
     msg_id = _get_client().xadd(settings.LLM_QUEUE_NAME, fields)

@@ -16,6 +16,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import TYPE_CHECKING
 
 import structlog
 from django.conf import settings
@@ -25,6 +26,9 @@ from crawler import progress as _progress
 from crawler.dedup import content_hash as _ch
 from crawler.dedup import url_fingerprint as _uf
 from sources.models import Source
+
+if TYPE_CHECKING:
+    from crawler.extractors.base import ExtractedContent
 
 log = structlog.get_logger(__name__)
 
@@ -65,6 +69,10 @@ class _Article:
     match_text: str | None = None
     # Source-specific provenance persisted alongside the raw record (FR-13).
     metadata: dict | None = None
+    # Source-stated fields the crawler supplies (the LLM extracts the rest).
+    author: str = ""
+    source_name: str = ""
+    source_type: str = ""
 
 
 def _extract_candidates(source: Source, result) -> list[_Article]:
@@ -80,6 +88,9 @@ def _extract_candidates(source: Source, result) -> list[_Article]:
                 body=item.content.body,
                 language=item.content.language or source.language_hint or "",
                 published_at=item.content.published_at,
+                author=item.content.author or "",
+                source_name=item.content.site_name or source.name,
+                source_type=source.content_type,
             )
             for item in extract_feed(result.body)
         ]
@@ -94,6 +105,9 @@ def _extract_candidates(source: Source, result) -> list[_Article]:
             body=content.body,
             language=source.language_hint or "",
             published_at=content.published_at,
+            author=content.author or "",
+            source_name=source.name,
+            source_type=source.content_type,
         )
     ]
 
@@ -163,11 +177,12 @@ def _eios_link_fetchable(item: dict) -> bool:
     return not (src.get("type") or "").lower().startswith(_EIOS_UNFETCHABLE_SOURCE_TYPE_PREFIXES)
 
 
-def _fetch_original_body(link: str) -> tuple[str, str]:
-    """Main text of the original article page, and why it failed ("" on success).
+def _fetch_original_page(link: str) -> tuple[ExtractedContent | None, str]:
+    """Extracted original article page, and why its text is missing ("" if not).
 
-    Timeouts and transient server errors are retried once. Sites that refuse
-    the crawler (403 etc.) are not worked around (SRS §2.5).
+    The content (author, date, site name) is returned even when the page has
+    no article text. Timeouts and transient server errors are retried once.
+    Sites that refuse the crawler (403 etc.) are not worked around (SRS §2.5).
     """
     import time
 
@@ -189,16 +204,16 @@ def _fetch_original_body(link: str) -> tuple[str, str]:
             if result.status_code < 400:
                 content_type = (result.headers.get("content-type") or "").lower()
                 if "pdf" in content_type:
-                    return "", "PDF (not extracted)"
-                body = extract_html(result.body, url=result.final_url).body
-                return body, "" if body else "no article text found on page"
+                    return None, "PDF (not extracted)"
+                content = extract_html(result.body, url=result.final_url)
+                return content, "" if content.body else "no article text found on page"
             reason = f"HTTP {result.status_code}"
             retry = result.status_code in _LINK_RETRY_STATUSES
         if not retry or attempt == 2:
             break
         time.sleep(_LINK_RETRY_DELAY_SECONDS)
-    log.warning("eios.link_fetch_failed", url=link, reason=reason)
-    return "", reason
+    log.warning("link_fetch_failed", url=link, reason=reason)
+    return None, reason
 
 
 class _EIOSFullText:
@@ -228,17 +243,23 @@ def _eios_window(source: Source, now) -> tuple:
     return now - timedelta(hours=settings.EIOS_BACKFILL_HOURS), now
 
 
+def eios_match_text(item: dict) -> str:
+    """Title plus EIOS's English translation, matched alongside the body."""
+    return _join_text(
+        item.get("title"),
+        item.get("translatedTitle"),
+        item.get("translatedDescription"),
+        item.get("translatedAbstractiveSummary"),
+    )
+
+
 def _eios_article(source: Source, item: dict, link: str) -> _Article:
     """Snippet-bodied article for an EIOS item; the body is replaced if the
     original page yields more text."""
     title = item.get("title") or ""
     language = item.get("languageIso") or source.language_hint or ""
     snippet = _join_text(item.get("description"), item.get("abstractiveSummary"))
-    translation = _join_text(
-        item.get("translatedTitle"),
-        item.get("translatedDescription"),
-        item.get("translatedAbstractiveSummary"),
-    )
+    publisher = item.get("source") or {}
     return _Article(
         url=link,
         final_url=link,
@@ -247,7 +268,9 @@ def _eios_article(source: Source, item: dict, link: str) -> _Article:
         body=snippet,
         language=language,
         published_at=item.get("pubDate"),
-        match_text=_join_text(title, translation),
+        match_text=eios_match_text(item),
+        source_name=publisher.get("name") or source.name,
+        source_type=publisher.get("type") or source.content_type,
         metadata={
             # The complete EIOS record as returned (title, description, translations,
             # summary, countries, locations, categories, source, scores, ...), so
@@ -307,8 +330,13 @@ def _eios_candidates(
         # Both versions are kept: EIOS's own text in metadata["eios"] and our
         # crawled page text in metadata["crawled_text"]. `body` is the best of
         # them: EIOS fullText, else the crawled text if longer than the snippet.
+        # EIOS has no byline, so the author comes from the page.
         if page is not None:
-            body, reason = page.result()
+            content, reason = page.result()
+            body = content.body if content else ""
+            if content is not None:
+                article.author = content.author or ""
+                article.published_at = article.published_at or content.published_at
             if body:
                 article.metadata["crawled_text"] = body
             if article.metadata["body_source"] == "eios_fulltext":
@@ -346,7 +374,7 @@ def _eios_candidates(
                 article.metadata["eios"]["fullText"] = full
                 article.metadata["body_source"] = "eios_fulltext"
             if _eios_link_fetchable(item):
-                pending[pool.submit(_fetch_original_body, link)] = article
+                pending[pool.submit(_fetch_original_page, link)] = article
             else:
                 article.metadata["link_error"] = "not publicly accessible (GPHIN / social media)"
                 yield complete(article)
@@ -383,6 +411,28 @@ def _detect_language(text: str, hint: str) -> str:
 # Dedup helpers
 # ---------------------------------------------------------------------------
 
+def _raw_fields(source: Source, article: _Article, fetched_at) -> dict:
+    """RawArticle fields shared by stored and suppressed records (FR-13)."""
+    from crawler.extractors.base import parse_published
+
+    return {
+        "source": source,
+        "url": article.url,
+        "final_url": article.final_url,
+        "http_status": article.http_status,
+        "fetched_at": fetched_at,
+        "title": article.title,
+        "body": article.body,
+        "published_at": parse_published(article.published_at),
+        "author": article.author[:512],
+        "source_name": article.source_name[:255],
+        "source_type": article.source_type[:64],
+        "url_fingerprint": _uf.fingerprint(article.url),
+        "content_hash": _ch.content_hash(article.body),
+        "metadata": article.metadata,
+    }
+
+
 def _suppress(
     source: Source,
     article: _Article,
@@ -393,21 +443,12 @@ def _suppress(
     from raw_content.models import RawArticle
 
     RawArticle.objects.create(
-        source=source,
-        url=article.url,
-        final_url=article.final_url,
-        http_status=article.http_status,
-        fetched_at=fetched_at,
-        title=article.title,
-        body=article.body,
+        **_raw_fields(source, article, fetched_at),
         language=article.language,
-        url_fingerprint=_uf.fingerprint(article.url),
-        content_hash=_ch.content_hash(article.body),
         is_duplicate=True,
         duplicate_of_id=dup_id,
         suppression_reason=reason,
         processing_status=RawArticle.ProcessingStatus.SUPPRESSED,
-        metadata=article.metadata,
     )
     log.info(
         "article.suppressed",
@@ -469,21 +510,12 @@ def _process_article(source: Source, article: _Article, fetched_at) -> str:
         else RawArticle.ProcessingStatus.PENDING
     )
     record = RawArticle.objects.create(
-        source=source,
-        url=article.url,
-        final_url=article.final_url,
-        http_status=article.http_status,
-        fetched_at=fetched_at,
-        title=article.title,
-        body=article.body,
+        **_raw_fields(source, article, fetched_at),
         language=lang,
-        url_fingerprint=_uf.fingerprint(article.url),
-        content_hash=_ch.content_hash(article.body),
         is_keyword_matched=is_matched,
         matched_diseases=matched_diseases or None,
         embedding=embedding,
         processing_status=status,
-        metadata=article.metadata,
     )
     log.info(
         "article.persisted",

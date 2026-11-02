@@ -123,7 +123,8 @@ Network errors (`httpx.HTTPError`) propagate to the Celery task, which calls `re
 
 An EIOS source's `url` is a board's articles endpoint, e.g.
 `https://eios.who.int/portal/api/api/v1.0/Items/matching-board/<boardId>`
-(`seed_dev` creates one from `EIOS_BOARD_ID`).
+Boards are stored as sources in the database — add them from the dashboard's
+**Add EIOS board** panel.
 
 - **Auth:** OAuth2 client-credentials token from Azure AD (`EIOS_TOKEN_URL`, `EIOS_CLIENT_ID`, `EIOS_CLIENT_SECRET`, `EIOS_SCOPE`); cached ~1h, refreshed on expiry or 401.
 - **Paging:** the API is offset-paged and refuses offsets past 10,000, so the range is read in `EIOS_WINDOW_MINUTES` windows, halving any window that reports ≥ 10,000 articles.
@@ -230,8 +231,12 @@ Appends keyword-matched articles to a **Redis Stream** (`LLM_QUEUE_NAME`, defaul
 | `language` | BCP-47 tag detected by langdetect |
 | `matched_diseases` | JSON-encoded list — e.g. `["dengue", "cholera"]` |
 | `metadata` | JSON-encoded object, `{}` if none. For EIOS: `{"eios": {...complete EIOS record...}, "body_source": ..., "link_error": ...}` |
+| `published_at` | ISO-8601 publication / reporting date stated by the source, `""` if unknown |
+| `author` | Reporter / author byline from page or feed metadata, `""` if none |
+| `source_name` | Publisher (EIOS source name, feed `<source>`, else the configured source name) |
+| `source_type` | `html` / `rss` / `social`, or the EIOS publisher type (`webnews`, `wire`, `socialmedia-…`) |
 | `fetched_at` | ISO-8601 timestamp of the crawl |
-| `published_at` | ISO-8601 timestamp of the stream publish |
+| `queued_at` | ISO-8601 timestamp of the stream publish |
 
 A `redis.RedisError` propagates unchanged so the pipeline leaves the article in `matched` state for a future retry.
 
@@ -354,6 +359,10 @@ RawArticle
 ├── body                TextField
 ├── language            CharField(10)  — BCP-47
 ├── metadata            JSONField (null) — source-specific provenance (e.g. EIOS)
+├── published_at        DateTimeField (null, db_index) — source-stated publication date
+├── author              CharField(512) — byline
+├── source_name         CharField(255) — publisher
+├── source_type         CharField(64)  — channel / EIOS publisher type
 ├── url_fingerprint     CharField(64, db_index)
 ├── content_hash        CharField(64, db_index)
 ├── is_duplicate        BooleanField
@@ -424,7 +433,6 @@ All settings are environment-variable-driven via `django-environ`. Copy `.env.ex
 | `EIOS_CLIENT_ID` | *(blank)* | EIOS consumer client ID |
 | `EIOS_CLIENT_SECRET` | *(blank)* | EIOS consumer client secret |
 | `EIOS_SCOPE` | *(blank)* | EIOS client-ID scope (`EIOS_CLIENT_ID_SCOPE` in the EIOS docs) |
-| `EIOS_BOARD_ID` | *(blank)* | Board whose articles are pulled |
 | `EIOS_BACKFILL_HOURS` | `24` | First-run look-back; later runs resume from the last crawl |
 | `EIOS_WINDOW_MINUTES` | `60` | Time-window size for paging the board (each window must hold < 10,000 articles; split automatically) |
 | `EIOS_PAGE_SIZE` | `100` | Articles per page (API max 100) |
@@ -526,6 +534,10 @@ Open `http://127.0.0.1:8000/` (staff login required). Only `runserver` is needed
 
 - **Sources** lists every source with its article counts, last crawl, and a **▶ Run now** button.
   Sources already being crawled show a live progress bar instead.
+- **Add EIOS board** adds another WHO-EIOS board as a source: enter its board ID (built
+  against `EIOS_API_BASE_URL`) or paste a full `…/Items/matching-board/<id>` URL, plus an
+  optional name and crawl interval. New boards stay unscheduled unless *Schedule
+  automatically* is ticked — test them with **▶ Run now** first (FR-09).
 - **Run page** (`/crawl/runs/<id>/`) updates every second:
   - **Progress:** the bar, current stage, elapsed time, articles/s and time remaining. EIOS
     progress follows the time range being read, one window at a time.
@@ -615,6 +627,7 @@ pipenv run pytest --cov=crawler --cov=sources --cov=raw_content
 | `test_publisher.py` | Redis XADD payload shape, JSON encoding, error propagation, connection reuse |
 | `test_keyword_filter.py` | DB keyword matching, case-insensitivity, language filtering, per-source overrides |
 | `test_eios.py` | EIOS token caching/refresh, windowed paging + split at 10k, full-text fallback chain, re-poll skipping |
+| `test_eios_boards.py` | Adding EIOS boards from the dashboard: by ID or URL, duplicate/invalid rejection |
 | `test_crawl_runs.py` | Crawl run progress counters, stop requests, one-run-per-source, stale-run detection, dashboard views |
 | `test_semantic_dedup.py` | Cosine math, embedding computation, DB duplicate detection, pipeline integration |
 

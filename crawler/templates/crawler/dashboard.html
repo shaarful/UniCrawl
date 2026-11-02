@@ -10,6 +10,22 @@
   .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
          background: var(--run); margin-right: 6px; animation: pulse 1.2s infinite; }
   @keyframes pulse { 50% { opacity: .3; } }
+  details.add > summary { cursor: pointer; font-weight: 600; font-size: 15px; }
+  details.add[open] > summary { margin-bottom: 12px; }
+  .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+               gap: 12px 16px; align-items: start; }
+  .field label { display: block; font-size: 12px; font-weight: 600; color: var(--muted);
+                 margin-bottom: 4px; }
+  .field input[type=text], .field input[type=number] {
+    width: 100%; padding: 6px 9px; border: 1px solid var(--border); border-radius: 7px;
+    background: var(--bg); color: var(--text); font: inherit; }
+  .field input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+  .field .check { display: flex; gap: 8px; align-items: center; font-weight: 600;
+                  color: var(--text); font-size: 14px; margin-top: 22px; }
+  .field .help { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .field .errors { font-size: 12px; color: var(--bad); margin-top: 3px; }
+  .note { padding: 8px 12px; border-radius: 8px; background: var(--warn-soft); color: var(--warn);
+          margin-bottom: 12px; font-size: 13px; }
 </style>
 {% endblock %}
 {% block content %}
@@ -34,6 +50,34 @@
       <tbody id="sources"><tr><td colspan="7" class="muted">Loading…</td></tr></tbody>
     </table>
   </div>
+</section>
+
+<section class="panel">
+  <details class="add" {% if eios_form.is_bound %}open{% endif %}>
+    <summary>Add EIOS board</summary>
+    {% if not eios_configured %}
+      <div class="note">EIOS credentials (EIOS_CLIENT_ID / EIOS_TOKEN_URL) are not set — the board
+        can be added, but crawls of it will fail until they are configured.</div>
+    {% endif %}
+    <form method="post" action="{% url 'crawler:eios-board-add' %}">
+      {% csrf_token %}
+      {% for error in eios_form.non_field_errors %}<div class="note">{{ error }}</div>{% endfor %}
+      <div class="form-grid">
+        {% for field in eios_form %}
+          <div class="field">
+            {% if field.widget_type == "checkbox" %}
+              <label class="check">{{ field }} {{ field.label }}</label>
+            {% else %}
+              {{ field.label_tag }}{{ field }}
+            {% endif %}
+            {% if field.help_text %}<div class="help">{{ field.help_text }}</div>{% endif %}
+            {% for error in field.errors %}<div class="errors">{{ error }}</div>{% endfor %}
+          </div>
+        {% endfor %}
+      </div>
+      <div style="margin-top:14px"><button class="btn primary" type="submit">Add board</button></div>
+    </form>
+  </details>
 </section>
 
 <section class="panel">

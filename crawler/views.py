@@ -5,15 +5,19 @@ once a second while a crawl is running.
 """
 from __future__ import annotations
 
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.admin.views.decorators import staff_member_required
 from django.db.models import Count, Q
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
+from crawler.forms import EIOSBoardForm
 from crawler.models import CrawlRun
+from crawler.refetch import refetch_article
 from crawler.runs import AlreadyRunning, mark_stale_runs, request_stop, start_run
 from raw_content.models import RawArticle
 from sources.models import Source
@@ -66,12 +70,32 @@ def _article_json(article: RawArticle) -> dict:
         "link_error": (article.metadata or {}).get("link_error", ""),
         "body_chars": len(article.body),
         "admin_url": reverse("admin:raw_content_rawarticle_change", args=[article.pk]),
+        "refetch_url": reverse("crawler:article-refetch", args=[article.pk]),
     }
+
+
+def _render_dashboard(request, eios_form: EIOSBoardForm, status: int = 200):
+    return render(request, "crawler/dashboard.html", {
+        "eios_form": eios_form,
+        "eios_configured": bool(settings.EIOS_CLIENT_ID and settings.EIOS_TOKEN_URL),
+    }, status=status)
 
 
 @staff_member_required
 def dashboard(request):
-    return render(request, "crawler/dashboard.html")
+    return _render_dashboard(request, EIOSBoardForm())
+
+
+@staff_member_required
+@require_POST
+def eios_board_add(request):
+    """Add a WHO-EIOS board as a new source (dashboard form)."""
+    form = EIOSBoardForm(request.POST)
+    if not form.is_valid():
+        return _render_dashboard(request, form, status=400)
+    source = form.save(user=request.user)
+    messages.success(request, f"Added {source.name}. Use “Run now” to test-crawl it.")
+    return redirect("crawler:dashboard")
 
 
 @staff_member_required
@@ -150,6 +174,23 @@ def run_status(request, run_id: int):
         "latest": [_article_json(a) for a in articles[:FEED_SIZE]],
         "matched": [_article_json(a) for a in articles.filter(is_keyword_matched=True)[:FEED_SIZE]],
     })
+
+
+@staff_member_required
+@require_POST
+def article_refetch(request, article_id: int):
+    """Refetch one article from its original link (admin page / run page button)."""
+    get_object_or_404(RawArticle, pk=article_id)
+    result = refetch_article(article_id)
+    if request.headers.get("accept", "").startswith("application/json"):
+        return JsonResponse({"ok": result.ok, "message": result.message})
+    (messages.success if result.ok else messages.warning)(request, result.message)
+    next_url = request.POST.get("next", "")
+    if not url_has_allowed_host_and_scheme(
+        next_url, allowed_hosts={request.get_host()}, require_https=request.is_secure(),
+    ):
+        next_url = reverse("admin:raw_content_rawarticle_change", args=[article_id])
+    return redirect(next_url)
 
 
 @staff_member_required

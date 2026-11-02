@@ -138,3 +138,66 @@ def test_extract_feed_entry_returns_none_for_linkless_entry():
     parsed = feedparser.parse(RSS_SAMPLE)
     linkless = [e for e in parsed.entries if not e.get("link") and not e.get("id")][0]
     assert extract_feed_entry(linkless) is None
+
+
+# --- Source-stated fields (author, publisher, publication date) ----------------
+
+BYLINE_HTML = HTML_SAMPLE.replace(
+    b"<title>",
+    b'<meta name="author" content="Jane Reporter">'
+    b'<meta property="og:site_name" content="Daily Health Times"><title>',
+)
+
+BYLINE_RSS = b"""<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/">
+<channel>
+  <title>Aggregated news</title>
+  <item>
+    <title>Nipah case confirmed</title>
+    <link>https://example.com/nipah</link>
+    <description>One case confirmed.</description>
+    <pubDate>Tue, 20 May 2026 08:30:00 +0600</pubDate>
+    <dc:creator>Rahim Uddin</dc:creator>
+    <source url="https://dhaka.example.com/rss">Dhaka Tribune</source>
+  </item>
+  <item>
+    <title>Anthrax in cattle</title>
+    <link>https://example.com/anthrax</link>
+    <author>desk@example.com (Health Desk)</author>
+  </item>
+</channel>
+</rss>
+"""
+
+
+def test_extract_html_captures_author_site_name_and_date():
+    result = extract_html(BYLINE_HTML, url="https://example.com/news/dengue")
+    assert result.author == "Jane Reporter"
+    assert result.site_name == "Daily Health Times"
+    assert result.published_at == "2026-05-19"
+
+
+def test_extract_feed_captures_author_publisher_and_utc_date():
+    by_url = {i.url: i.content for i in extract_feed(BYLINE_RSS)}
+
+    nipah = by_url["https://example.com/nipah"]
+    assert nipah.author == "Rahim Uddin"
+    assert nipah.site_name == "Dhaka Tribune"
+    assert nipah.published_at == "2026-05-20T02:30:00+00:00"
+
+    anthrax = by_url["https://example.com/anthrax"]
+    assert anthrax.author == "Health Desk"
+    assert anthrax.site_name is None
+    assert anthrax.published_at is None
+
+
+def test_parse_published_accepts_iso_rfc822_and_date_only():
+    from datetime import UTC, datetime
+
+    from crawler.extractors.base import parse_published
+
+    assert parse_published("2026-10-25T06:00:00Z") == datetime(2026, 10, 25, 6, tzinfo=UTC)
+    assert parse_published("Mon, 19 May 2026 12:00:00 GMT") == datetime(2026, 5, 19, 12, tzinfo=UTC)
+    assert parse_published("2026-05-19") == datetime(2026, 5, 19, tzinfo=UTC)
+    assert parse_published("yesterday") is None
+    assert parse_published(None) is None

@@ -29,6 +29,14 @@
   .events li { padding: 3px 0; white-space: pre-wrap; word-break: break-word; }
   .events .error { color: var(--bad); }
   .events .warning { color: var(--warn); }
+  .feed .linkbtn { border: 0; background: none; padding: 0; font: inherit; color: var(--accent);
+                  cursor: pointer; }
+  .feed .linkbtn:hover { text-decoration: underline; }
+  .feed .linkbtn[disabled] { color: var(--muted); cursor: default; text-decoration: none; }
+  #notice:empty { display: none; }
+  #notice { padding: 10px 14px; border-radius: 8px; margin-bottom: 20px; background: var(--ok-soft);
+            color: var(--ok); }
+  #notice.warning { background: var(--warn-soft); color: var(--warn); }
   .errbox { background: var(--bad-soft); color: var(--bad); border-radius: 8px; padding: 10px 14px;
             margin-top: 12px; font-family: var(--mono); font-size: 12px; white-space: pre-wrap; }
 </style>
@@ -66,6 +74,8 @@
 
 <div class="stats" id="stats"></div>
 
+<div id="notice" role="status"></div>
+
 <div class="cols">
   <section class="panel">
     <h2>Matched articles <span class="muted small" id="matched-count"></span></h2>
@@ -88,6 +98,7 @@
   const STATUS_URL = "{% url 'crawler:run-status' run.pk %}";
   const seen = new Set();
   let first = true;
+  let polling = true;
 
   const STATS = [
     ["processed", "Processed"], ["full_text", "Full text", "eios"], ["new", "New stored"],
@@ -158,7 +169,35 @@
         a.language ? el("span", {}, a.language) : null,
         bodyInfo(a),
         el("span", {}, fmt(a.body_chars) + " chars"),
-        el("a", {href: a.admin_url}, "details")));
+        el("a", {href: a.admin_url}, "details"),
+        refetchButton(a)));
+  }
+
+  function refetchButton(a) {
+    const btn = el("button", {type: "button", class: "linkbtn",
+                              title: "Fetch the original link again and update the stored text"},
+                   "↻ refetch");
+    btn.addEventListener("click", () => refetch(a, btn));
+    return btn;
+  }
+
+  async function refetch(a, btn) {
+    btn.disabled = true;
+    btn.textContent = "refetching…";
+    const notice = document.getElementById("notice");
+    try {
+      const res = await fetch(a.refetch_url, {method: "POST",
+                                              headers: {"X-CSRFToken": csrf(), Accept: "application/json"}});
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const data = await res.json();
+      notice.className = data.ok ? "" : "warning";
+      notice.textContent = `${a.title || a.url}: ${data.message}`;
+    } catch (e) {
+      notice.className = "warning";
+      notice.textContent = `${a.title || a.url}: refetch failed (${e.message}).`;
+    }
+    if (!polling) refresh();  // a running crawl re-renders on its next poll
+    else { btn.disabled = false; btn.textContent = "↻ refetch"; }
   }
 
   function renderFeed(id, articles, emptyText) {
@@ -175,6 +214,7 @@
       if (!res.ok) throw new Error(res.status);
       const data = await res.json();
       running = data.run.status === "running";
+      polling = running;
       renderRun(data.run);
       renderFeed("matched", data.matched, "Nothing matched yet.");
       renderFeed("latest", data.latest, running ? "Waiting for articles…" : "No new articles in this run.");

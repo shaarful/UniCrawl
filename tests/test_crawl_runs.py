@@ -9,6 +9,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from crawler import progress as P
+from crawler.extractors.base import ExtractedContent
 from crawler.fetchers.eios import board_url
 from crawler.models import CrawlRun
 from crawler.runs import AlreadyRunning, create_run, execute_run, mark_stale_runs
@@ -32,6 +33,10 @@ def _item(id_, title, description=""):
     }
 
 
+def _page(body: str) -> ExtractedContent:
+    return ExtractedContent(title=None, body=body, published_at=None, language=None)
+
+
 def _fetcher(items):
     fetcher = MagicMock()
     fetcher.iter_board_items.return_value = iter(items)
@@ -43,8 +48,8 @@ def _patched_pipeline(fetcher):
     return (
         patch("crawler.pipeline._fetcher_for", return_value=fetcher),
         patch("crawler.publisher.publish_matched"),
-        patch("crawler.pipeline._fetch_original_body",
-              side_effect=lambda link: (f"Original page text of {link}. " * 20, "")),
+        patch("crawler.pipeline._fetch_original_page",
+              side_effect=lambda link: (_page(f"Original page text of {link}. " * 20), "")),
     )
 
 
@@ -118,8 +123,8 @@ def test_queue_failure_counts_as_matched_not_error():
     fetcher = _fetcher([_item("a", "Ebola outbreak"), _item("b", "Ebola again")])
     with (
         patch("crawler.pipeline._fetcher_for", return_value=fetcher),
-        patch("crawler.pipeline._fetch_original_body",
-              side_effect=lambda u: (f"Ebola {u} " * 20, "")),
+        patch("crawler.pipeline._fetch_original_page",
+              side_effect=lambda u: (_page(f"Ebola {u} " * 20), "")),
         patch("crawler.publisher.publish_matched", side_effect=ConnectionError("refused")),
     ):
         execute_run(run.pk)

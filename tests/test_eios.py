@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
+from crawler.extractors.base import ExtractedContent
 from crawler.fetchers.eios import EIOSFetcher, board_url, parse_board_url
 from crawler.pipeline import run_for_source
 from raw_content.models import RawArticle
@@ -202,11 +203,20 @@ def _page_text(link):
     return f"Original page text of {link}. " * 20, ""
 
 
+def _extracted(body: str, reason: str = "", **fields):
+    """What _fetch_original_page returns for a page with this text (None if unread)."""
+    if not body and reason:
+        return None, reason
+    content = ExtractedContent(title=None, body=body, published_at=None, language=None, **fields)
+    return content, reason
+
+
 def _run(source, fetcher, page=_page_text):
     """Run the pipeline; `page(link)` returns (body, failure reason) for original pages."""
     with patch("crawler.pipeline._fetcher_for", return_value=fetcher), \
          patch("crawler.publisher.publish_matched"), \
-         patch("crawler.pipeline._fetch_original_body", side_effect=page) as fetch_link:
+         patch("crawler.pipeline._fetch_original_page",
+               side_effect=lambda link: _extracted(*page(link))) as fetch_link:
         run_for_source(source.id)
     return fetch_link
 
@@ -390,12 +400,12 @@ def _page(status=200, body=_ARTICLE_HTML, content_type="text/html"):
 
 
 def _fetch_page(*outcomes):
-    from crawler.pipeline import _fetch_original_body
+    from crawler.pipeline import _fetch_original_page
 
     with patch("crawler.fetchers.html.HTMLFetcher.fetch", side_effect=outcomes) as fetch, \
          patch("crawler.pipeline._LINK_RETRY_DELAY_SECONDS", 0):
-        result = _fetch_original_body("https://news.example.com/a")
-    return result, fetch.call_count
+        content, reason = _fetch_original_page("https://news.example.com/a")
+    return (content.body if content else "", reason), fetch.call_count
 
 
 def test_original_page_text_is_extracted():
@@ -423,3 +433,38 @@ def test_original_page_server_error_is_retried_but_403_is_not():
 def test_original_page_pdf_is_reported_not_extracted():
     (body, reason), _ = _fetch_page(_page(body=b"%PDF-1.7", content_type="application/pdf"))
     assert (body, reason) == ("", "PDF (not extracted)")
+
+
+@pytest.mark.django_db
+def test_eios_pipeline_takes_publisher_and_date_from_the_eios_record():
+    from datetime import UTC, datetime
+
+    source = _eios_source()
+    item = _item("a", "Ebola update", source_id="Daily Nation", source_type="wire")
+    fetcher = _fake_fetcher([item])
+
+    _run(source, fetcher)
+
+    article = RawArticle.objects.get()
+    assert article.source_name == "Daily Nation"
+    assert article.source_type == "wire"
+    assert article.published_at == datetime(2026, 10, 25, 6, tzinfo=UTC)
+
+
+@pytest.mark.django_db
+def test_eios_pipeline_author_and_missing_date_come_from_the_page():
+    from datetime import UTC, datetime
+
+    source = _eios_source()
+    item = _item("a", "Ebola update")
+    del item["pubDate"]
+    with patch("crawler.pipeline._fetcher_for", return_value=_fake_fetcher([item])), \
+         patch("crawler.publisher.publish_matched"), \
+         patch("crawler.pipeline._fetch_original_page", return_value=_extracted(
+             "Officials confirmed Ebola. " * 10, author="A. Writer")) as page:
+        page.return_value[0].published_at = "2026-10-24"
+        run_for_source(source.id)
+
+    article = RawArticle.objects.get()
+    assert article.author == "A. Writer"
+    assert article.published_at == datetime(2026, 10, 24, tzinfo=UTC)
