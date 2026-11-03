@@ -158,6 +158,16 @@ class EIOSFetcher(HttpFetcher):
 
     # --- Board articles -------------------------------------------------------
 
+    def board_article_count(self, url: str, *, since: datetime, until: datetime) -> int | None:
+        """How many articles the board lists in the range, or None if EIOS has no such board."""
+        response = self._get(
+            url, {"start": 0, "limit": 1, "timeSince": _iso(since), "timeUntil": _iso(until)},
+        )
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        return response.json().get("count") or 0
+
     def iter_board_items(
         self,
         url: str,

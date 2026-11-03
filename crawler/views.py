@@ -103,7 +103,16 @@ def eios_board_add(request):
     if not form.is_valid():
         return _render_dashboard(request, form, status=400)
     source = form.save(user=request.user)
-    messages.success(request, f"Added {source.name}. Use “Run now” to test-crawl it.")
+    size = ""
+    if form.recent_articles:
+        size = (
+            f" EIOS lists {form.recent_articles:,} articles from the last "
+            f"{settings.EIOS_BACKFILL_HOURS} hours. The first crawl reads them all and opens "
+            "each original page, so it can take a while."
+        )
+    messages.success(request, f"Added {source.name}. Use “Run now” to test-crawl it.{size}")
+    if form.check_warning:
+        messages.warning(request, form.check_warning)
     return redirect("crawler:dashboard")
 
 

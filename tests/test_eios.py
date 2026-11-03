@@ -48,6 +48,42 @@ def test_parse_board_url_rejects_other_urls():
 
 
 # ---------------------------------------------------------------------------
+# Checking a board
+# ---------------------------------------------------------------------------
+
+def test_board_article_count_reads_the_count_and_handles_a_missing_board():
+    missing_url = board_url("https://eios.example.org/portal/api", "1.0", "RZDO")
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == TOKEN_URL:
+            return _token_response()
+        seen.update(request.url.params)
+        if request.url.path.endswith("/RZDO"):
+            return httpx.Response(404, json={"message": "Board not found - RZDO"})
+        return httpx.Response(200, json={"count": 41367, "result": [{}]})
+
+    fetcher = _fetcher(handler)
+    until = T0 + timedelta(hours=24)
+
+    assert fetcher.board_article_count(BOARD_URL, since=T0, until=until) == 41367
+    assert fetcher.board_article_count(missing_url, since=T0, until=until) is None
+    assert seen["limit"] == "1"
+    assert seen["timeSince"] == "2026-10-25T00:00:00Z"
+    assert seen["timeUntil"] == "2026-10-26T00:00:00Z"
+
+
+def test_board_article_count_raises_on_other_errors():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == TOKEN_URL:
+            return _token_response()
+        return httpx.Response(403)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        _fetcher(handler).board_article_count(BOARD_URL, since=T0, until=T0 + timedelta(hours=1))
+
+
+# ---------------------------------------------------------------------------
 # Auth
 # ---------------------------------------------------------------------------
 

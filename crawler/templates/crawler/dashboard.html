@@ -4,7 +4,12 @@
 {% block head %}
 <style>
   .src-name { font-weight: 600; }
-  .src-url { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .src-url { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sources-table th { white-space: nowrap; }
+  .src-actions { display: flex; flex-wrap: nowrap; align-items: center; justify-content: flex-end; gap: 6px; }
+  .src-actions form { display: contents; }
+  .crawl-cell { white-space: nowrap; }
+  .crawl-detail { margin-top: 3px; }
   .live { min-width: 220px; }
   .live .stage { font-size: 12px; color: var(--muted); margin-top: 4px;
                  max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -49,7 +54,7 @@
     <a class="btn" href="{% url 'admin:sources_source_add' %}">+ Add source</a>
   </div>
   <div class="table-wrap">
-    <table>
+    <table class="sources-table">
       <thead><tr>
         <th>Source</th><th>Type</th><th class="num">Articles</th><th class="num">Matched</th>
         <th>Last crawled</th><th>Crawl</th><th></th>
@@ -117,9 +122,12 @@
         el("div", {class: "stage", title: run.stage}, run.stage));
     }
     if (run) {
-      return el("td", {},
-        el("span", {class: "pill " + run.status}, run.status_label), " ",
-        el("span", {class: "muted small"}, `${ago(run.finished_at || run.started_at)} · ${fmt(run.matched)} matched`));
+      return el("td", {class: "crawl-cell"},
+        el("div", {},
+          el("span", {class: "pill " + run.status}, run.status_label), " ",
+          el("a", {href: run.url, class: "small", style: "margin-left:4px"}, "View run")),
+        el("div", {class: "crawl-detail muted small"},
+          `${ago(run.finished_at || run.started_at)} · ${fmt(run.matched)} matched`));
     }
     return el("td", {class: "muted"}, "No runs yet");
   }
@@ -129,14 +137,14 @@
     if (run && run.status === "running") {
       return el("td", {}, el("a", {class: "btn primary", href: run.url}, "Watch live →"));
     }
-    const form = el("form", {method: "post", action: src.start_url, style: "display:inline"},
+    const form = el("form", {method: "post", action: src.start_url},
       el("input", {type: "hidden", name: "csrfmiddlewaretoken", value: token}),
       el("button", {class: "btn primary", type: "submit"}, "▶ Run now"));
-    return el("td", {}, form,
-      src.recrawl_url ? el("a", {class: "btn danger", href: src.recrawl_url, style: "margin-left:6px",
-                                 title: "Delete all articles from this source and crawl it again"},
-                           "Delete & re-crawl") : null,
-      run ? el("a", {href: run.url, class: "small", style: "margin-left:10px"}, "last run") : null);
+    return el("td", {},
+      el("div", {class: "src-actions"}, form,
+        src.recrawl_url ? el("a", {class: "btn danger", href: src.recrawl_url,
+                                   title: "Delete all articles from this source and crawl it again"},
+                             "Delete & re-crawl") : null));
   }
 
   function renderSources(sources) {
