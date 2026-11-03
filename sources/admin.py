@@ -58,6 +58,11 @@ class SourceAdmin(admin.ModelAdmin):
                          "fields": ("added_by", "created_at", "updated_at")}),
         )
 
+    def get_list_display(self, request):
+        if request.user.has_perm("raw_content.delete_rawarticle"):
+            return tuple("run_buttons" if c == "run_now" else c for c in self.list_display)
+        return self.list_display
+
     def get_queryset(self, request):
         return super().get_queryset(request).annotate(article_count=Count("raw_articles"))
 
@@ -134,6 +139,16 @@ class SourceAdmin(admin.ModelAdmin):
             '<button type="submit" class="button source-run" formmethod="post" '
             'formaction="{}">Run now</button>',
             reverse("crawler:start", args=[obj.pk]),
+        )
+
+    @admin.display(description="")
+    def run_buttons(self, obj: Source):
+        return format_html(
+            '<span class="source-buttons">{}<a class="button source-recrawl" href="{}" '
+            'title="Delete all articles from this source and crawl it again">'
+            "Delete &amp; re-crawl</a></span>",
+            self.run_now(obj),
+            reverse("crawler:source-recrawl", args=[obj.pk]),
         )
 
     @admin.action(description="Start scheduled crawls for selected sources", permissions=["change"])

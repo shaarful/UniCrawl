@@ -9,6 +9,7 @@ urlpatterns = [
     path("status.json", views.dashboard_status, name="dashboard-status"),
     path("sources/eios/add/", views.eios_board_add, name="eios-board-add"),
     path("sources/<int:source_id>/run/", views.start, name="start"),
+    path("sources/<int:source_id>/recrawl/", views.source_recrawl, name="source-recrawl"),
     path("runs/<int:run_id>/", views.run_detail, name="run"),
     path("runs/<int:run_id>/status.json", views.run_status, name="run-status"),
     path("runs/<int:run_id>/stop/", views.run_stop, name="run-stop"),

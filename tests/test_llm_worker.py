@@ -81,6 +81,43 @@ def _fields(article, title="Title", body="Body"):
 
 
 # ---------------------------------------------------------------------------
+# An article deleted while it is being extracted
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("failure", [None, ArticleError("bad article")])
+def test_article_deleted_during_extraction_is_dead_lettered(article, failure):
+    def extract(*_args):
+        RawArticle.objects.filter(pk=article.pk).delete()
+        if failure:
+            raise failure
+        return _result("anthrax")
+
+    client = _client()
+
+    _worker(client, extract)._handle("1-0", _fields(article))
+
+    stream, fields = client.xadd.call_args.args
+    assert stream == DEAD
+    assert "deleted during extraction" in fields["failure_reason"]
+    assert not ArticleExtraction.objects.exists()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_integrity_error_on_an_article_that_still_exists_is_not_hidden(article):
+    from django.db import IntegrityError
+
+    client = _client()
+    with (
+        patch("llm.worker.save_extraction", side_effect=IntegrityError("other")),
+        pytest.raises(IntegrityError),
+    ):
+        _worker(client, lambda *_: _result("anthrax"))._handle("1-0", _fields(article))
+
+    client.xadd.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # Storing results
 # ---------------------------------------------------------------------------
 

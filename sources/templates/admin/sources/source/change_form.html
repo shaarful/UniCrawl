@@ -7,6 +7,10 @@
       <button type="submit" title="Crawl this source now and watch it live">Run now</button>
     </form>
   </li>
+  {% if perms.raw_content.delete_rawarticle %}
+    <li><a class="source-recrawl" href="{% url 'crawler:source-recrawl' original.pk %}"
+           title="Delete all articles from this source and crawl it again">Delete &amp; re-crawl</a></li>
+  {% endif %}
   <li><a href="{% url 'admin:raw_content_rawarticle_changelist' %}?source__id__exact={{ original.pk }}">Articles</a></li>
   {% if original.content_type != "eios" %}
     <li><a href="{{ original.url }}" target="_blank" rel="noopener">Open site ↗&#xFE0E;</a></li>

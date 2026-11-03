@@ -68,6 +68,41 @@ def start_run(source_id: int, *, user=None) -> CrawlRun:
     return run
 
 
+def delete_articles_and_recrawl(source_id: int, *, user=None) -> tuple[CrawlRun, int]:
+    """Delete a source's articles and crawl it again; returns the run and the number deleted.
+
+    The run is created first, inside the same transaction, so this is refused while the
+    source is being crawled and nothing is deleted if any step fails. Forgetting the last
+    crawl makes an EIOS source read its whole backfill window again.
+    """
+    from django.contrib.admin.models import CHANGE, LogEntry
+
+    from raw_content.models import RawArticle
+    from sources.models import Source
+
+    with transaction.atomic():
+        run = create_run(source_id, trigger=CrawlRun.Trigger.MANUAL, user=user)
+        _, per_model = RawArticle.objects.filter(source_id=source_id).delete()
+        deleted = per_model.get(RawArticle._meta.label, 0)
+        Source.objects.filter(pk=source_id).update(last_crawled_at=None)
+        if user is not None and user.is_authenticated:
+            LogEntry.objects.log_actions(
+                user.pk,
+                Source.objects.filter(pk=source_id),
+                CHANGE,
+                change_message=f"Articles deleted: {deleted}. Started a new crawl.",
+            )
+    log.warning(
+        "source.articles_deleted",
+        source_id=source_id,
+        run_id=run.pk,
+        user=user.get_username() if user is not None else "",
+        per_model=per_model,
+    )
+    _launch(run.pk)
+    return run, deleted
+
+
 def request_stop(run: CrawlRun) -> None:
     """Ask the crawl to stop. A run whose process is already gone has nobody
     to obey the request, so it is marked interrupted right away."""

@@ -132,7 +132,11 @@
     const form = el("form", {method: "post", action: src.start_url, style: "display:inline"},
       el("input", {type: "hidden", name: "csrfmiddlewaretoken", value: token}),
       el("button", {class: "btn primary", type: "submit"}, "▶ Run now"));
-    return el("td", {}, form, run ? el("a", {href: run.url, class: "small", style: "margin-left:10px"}, "last run") : null);
+    return el("td", {}, form,
+      src.recrawl_url ? el("a", {class: "btn danger", href: src.recrawl_url, style: "margin-left:6px",
+                                 title: "Delete all articles from this source and crawl it again"},
+                           "Delete & re-crawl") : null,
+      run ? el("a", {href: run.url, class: "small", style: "margin-left:10px"}, "last run") : null);
   }
 
   function renderSources(sources) {

@@ -8,22 +8,30 @@ from __future__ import annotations
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.admin.views.decorators import staff_member_required
-from django.db.models import Count, Q
+from django.core.exceptions import PermissionDenied
+from django.db.models import CASCADE, Count, Q
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_http_methods, require_POST
 
 from crawler.forms import EIOSBoardForm
 from crawler.models import CrawlRun
 from crawler.refetch import refetch_article
-from crawler.runs import AlreadyRunning, mark_stale_runs, request_stop, start_run
+from crawler.runs import (
+    AlreadyRunning,
+    delete_articles_and_recrawl,
+    mark_stale_runs,
+    request_stop,
+    start_run,
+)
 from raw_content.models import RawArticle
 from sources.models import Source
 
 FEED_SIZE = 25
 RECENT_RUNS = 15
+DELETE_ARTICLES = "raw_content.delete_rawarticle"
 
 
 def _iso(dt):
@@ -117,6 +125,7 @@ def dashboard_status(request):
             run = source.crawl_runs.select_related("source").first()
             if run is not None:
                 latest[source.pk] = run
+    can_recrawl = request.user.has_perm(DELETE_ARTICLES)
 
     return JsonResponse({
         "sources": [
@@ -133,6 +142,9 @@ def dashboard_status(request):
                 "matched_count": s.matched_count,
                 "start_url": reverse("crawler:start", args=[s.pk]),
                 "admin_url": reverse("admin:sources_source_change", args=[s.pk]),
+                "recrawl_url": (
+                    reverse("crawler:source-recrawl", args=[s.pk]) if can_recrawl else None
+                ),
                 "run": _run_json(latest[s.pk]) if s.pk in latest else None,
             }
             for s in sources
@@ -151,6 +163,77 @@ def start(request, source_id: int):
         messages.info(request, str(exc))
         return redirect("crawler:run", run_id=exc.run.pk)
     return redirect("crawler:run", run_id=run.pk)
+
+
+def _cascade_counts(queryset) -> list[tuple[str, int]]:
+    """What deleting `queryset` also deletes, found from the models so that the crawler
+    does not need to know about apps that attach data to its articles."""
+    counts = []
+    for relation in queryset.model._meta.related_objects:
+        if relation.on_delete is not CASCADE:
+            continue
+        related = relation.related_model.objects.filter(**{f"{relation.field.name}__in": queryset})
+        count = related.count()
+        if count:
+            meta = relation.related_model._meta
+            label = meta.verbose_name if count == 1 else meta.verbose_name_plural
+            counts.append((str(label), count))
+            counts.extend(_cascade_counts(related))
+    return counts
+
+
+def _recrawl_limit(source: Source) -> str:
+    """Why a new crawl may not bring every deleted article back."""
+    if source.content_type == Source.ContentType.EIOS:
+        hours = settings.EIOS_BACKFILL_HOURS
+        return (
+            f"The new crawl only reads the last {hours} hours of this EIOS board. "
+            "Older articles will not come back."
+        )
+    if source.content_type == Source.ContentType.RSS:
+        return (
+            "The new crawl only finds what the feed lists today. "
+            "Older articles that have left the feed will not come back."
+        )
+    if source.crawl_depth <= 1:
+        return "The new crawl only reads this one page, as it is today."
+    pages = settings.CRAWLER_MAX_PAGES_PER_RUN
+    return (
+        "The new crawl only finds links on the page today, so older articles that are no "
+        f"longer linked will not come back. It reads up to {pages} pages per crawl."
+    )
+
+
+@staff_member_required
+@require_http_methods(["GET", "POST"])
+def source_recrawl(request, source_id: int):
+    """Delete all of a source's articles and crawl it again, after a confirmation page."""
+    if not request.user.has_perm(DELETE_ARTICLES):
+        raise PermissionDenied
+    source = get_object_or_404(Source, pk=source_id)
+
+    if request.method == "POST":
+        try:
+            run, deleted = delete_articles_and_recrawl(source.pk, user=request.user)
+        except AlreadyRunning as exc:
+            messages.info(request, f"{exc} Nothing was deleted.")
+            return redirect("crawler:run", run_id=exc.run.pk)
+        noun = "article" if deleted == 1 else "articles"
+        messages.success(request, f"Deleted {deleted:,} {noun} from {source.name}.")
+        return redirect("crawler:run", run_id=run.pk)
+
+    mark_stale_runs()
+    articles = RawArticle.objects.filter(source=source)
+    return render(request, "crawler/source_recrawl.html", {
+        "source": source,
+        "article_count": articles.count(),
+        "cascade_counts": _cascade_counts(articles),
+        "linked_duplicates": (
+            RawArticle.objects.filter(duplicate_of__source=source).exclude(source=source).count()
+        ),
+        "limit": _recrawl_limit(source),
+        "active_run": source.crawl_runs.filter(status=CrawlRun.Status.RUNNING).first(),
+    })
 
 
 @staff_member_required

@@ -25,7 +25,13 @@ from collections import Counter
 import redis
 import structlog
 from django.conf import settings
-from django.db import InterfaceError, OperationalError, close_old_connections, transaction
+from django.db import (
+    IntegrityError,
+    InterfaceError,
+    OperationalError,
+    close_old_connections,
+    transaction,
+)
 
 from llm.gemini import ArticleError, ServiceError
 from llm.models import ArticleExtraction
@@ -146,18 +152,25 @@ class ExtractionWorker:
             return
 
         try:
-            result = self.extractor.extract(title, body, fields.get("published_at", ""))
-        except ArticleError as exc:
-            self._on_article_error(message_id, fields, article_id, input_hash, exc)
-            return
+            try:
+                result = self.extractor.extract(title, body, fields.get("published_at", ""))
+            except ArticleError as exc:
+                self._on_article_error(message_id, fields, article_id, input_hash, exc)
+                return
 
-        save_extraction(
-            article_id,
-            message_id=message_id,
-            input_hash=input_hash,
-            model=self.extractor.model,
-            result=result,
-        )
+            save_extraction(
+                article_id,
+                message_id=message_id,
+                input_hash=input_hash,
+                model=self.extractor.model,
+                result=result,
+            )
+        except IntegrityError:
+            # Extraction takes seconds, and the article can be deleted meanwhile.
+            if RawArticle.objects.filter(pk=article_id).exists():
+                raise
+            self._dead_letter(message_id, fields, f"article {article_id} deleted during extraction")
+            return
         self._finish(message_id)
         log.info(
             "llm.extracted",

@@ -310,8 +310,18 @@ input:focus, textarea:focus, select:focus, .vTextField:focus { border-color: var
 .model-source .aligned .form-row > div { width: 100%; max-width: 100%; }
 #changelist .source-run { padding: 5px 10px; white-space: nowrap; }
 /* Run now stays in view while the rest of a wide table scrolls under it. */
-.model-source #result_list .field-run_now, .model-source #result_list .column-run_now {
+.model-source #result_list .field-run_now, .model-source #result_list .column-run_now,
+.model-source #result_list .field-run_buttons, .model-source #result_list .column-run_buttons {
   position: sticky; right: 0; border-left: 1px solid var(--hairline-color); background: var(--body-bg); }
+.source-buttons { display: flex; flex-wrap: wrap; gap: 6px; max-width: 220px; }
+#changelist a.button.source-recrawl, #content .object-tools a.source-recrawl,
+#content .object-tools a.source-recrawl:link, #content .object-tools a.source-recrawl:visited {
+  background: var(--delete-button-bg); color: #ffffff; }
+#changelist a.button.source-recrawl:hover, #content .object-tools a.source-recrawl:hover {
+  background: var(--delete-button-hover-bg); }
+#changelist a.button.source-recrawl { padding: 5px 10px; border-radius: 7px; font-weight: 600;
+  text-decoration: none; white-space: nowrap; }
+@media (max-width: 767px) { .source-buttons { flex-direction: column; } }
 @media (max-width: 1365px) {
   /* The filters move under the table, which leaves it room for every column. */
   .model-source #changelist .changelist-form-container { flex-direction: column; align-items: stretch; }

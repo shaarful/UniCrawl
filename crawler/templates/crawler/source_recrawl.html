@@ -1,0 +1,58 @@
+{% extends "crawler/base.html" %}
+{% block title %}Delete and re-crawl {{ source.name }}{% endblock %}
+{% block head %}
+<style>
+  .confirm { max-width: 680px; margin: 0 auto; }
+  .confirm h1 { margin-bottom: 8px; }
+  .confirm ul { margin: 8px 0 16px; padding-left: 20px; }
+  .confirm .callout { margin: 0 0 12px; padding: 10px 14px; border-radius: 8px;
+                      background: var(--warn-soft); color: var(--warn); }
+  .confirm .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+  .btn.confirm-delete { border-color: var(--bad); background: var(--bad); color: var(--panel); }
+  .btn.confirm-delete:hover { border-color: var(--bad); filter: brightness(1.1); }
+</style>
+{% endblock %}
+{% block content %}
+<section class="panel confirm">
+  <h1>Delete all articles and re-crawl?</h1>
+  <p>
+    <strong>{{ source.name }}</strong><br>
+    <span class="muted small mono">{{ source.url }}</span>
+  </p>
+
+  {% if active_run %}
+    <p class="callout">This source is being crawled now. Wait for that crawl to finish, or stop it first.</p>
+    <div class="actions">
+      <a class="btn primary" href="{% url 'crawler:run' active_run.pk %}">Watch the crawl</a>
+      <a class="btn" href="{% url 'crawler:dashboard' %}">Back to dashboard</a>
+    </div>
+  {% else %}
+    {% if article_count %}
+      <p style="margin-bottom:0">This permanently deletes:</p>
+      <ul>
+        <li><strong>{{ article_count }}</strong> article{{ article_count|pluralize }}</li>
+        {% for label, count in cascade_counts %}
+          <li><strong>{{ count }}</strong> {{ label }}</li>
+        {% endfor %}
+      </ul>
+      <p class="callout">{{ limit }} If the site cannot be reached, the crawl fails and the articles stay deleted.</p>
+      {% if cascade_counts %}
+        <p class="callout">Articles that match a keyword go to the LLM again, which costs new LLM usage. The deleted LLM results are not restored.</p>
+      {% endif %}
+      {% if linked_duplicates %}
+        <p class="callout">{{ linked_duplicates }} duplicate article{{ linked_duplicates|pluralize }} from other sources point{{ linked_duplicates|pluralize:"s," }} to these articles. They stay marked as duplicates but lose that link.</p>
+      {% endif %}
+    {% else %}
+      <p>This source has no articles to delete, so this only starts a crawl.</p>
+    {% endif %}
+
+    <form method="post">
+      {% csrf_token %}
+      <div class="actions">
+        <button class="btn confirm-delete" type="submit">{% if article_count %}Delete {{ article_count }} article{{ article_count|pluralize }} and re-crawl{% else %}Start crawl{% endif %}</button>
+        <a class="btn" href="{% url 'crawler:dashboard' %}">Cancel</a>
+      </div>
+    </form>
+  {% endif %}
+</section>
+{% endblock %}
