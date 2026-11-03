@@ -91,7 +91,6 @@ class SourceForm(forms.ModelForm):
                     *DEPTH_CHOICES, (depth, f"Follow links {depth} levels deep"),
                 ]
         for name, placeholder in (
-            ("name", "IEDCR outbreak bulletin"),
             ("url", "https://example.org/news"),
             ("language_hint", "bn"),
         ):

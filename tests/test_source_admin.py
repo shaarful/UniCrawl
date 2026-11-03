@@ -55,6 +55,7 @@ def test_add_page_only_asks_for_what_a_new_source_needs(admin_client):
     assert "Back-off" not in content
     assert "Last crawled at" not in content
     assert 'name="added_by"' not in content
+    assert "IEDCR" not in content
 
 
 @pytest.mark.django_db
