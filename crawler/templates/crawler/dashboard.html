@@ -1,4 +1,5 @@
 {% extends "crawler/base.html" %}
+{% load workflow %}
 {% block title %}Dashboard{% endblock %}
 {% block head %}
 <style>
@@ -39,7 +40,9 @@
 </div>
 {% csrf_token %}
 
-<section class="panel">
+{% workflow %}
+
+<section class="panel" id="crawl-sources">
   <div class="row" style="margin-bottom:12px">
     <h2 style="margin:0">Sources</h2>
     <div class="spacer"></div>

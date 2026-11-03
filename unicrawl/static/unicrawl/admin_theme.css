@@ -211,7 +211,7 @@ fieldset.collapse summary { background: none; color: var(--body-loud-color); }
 /* Home page: a grid of app cards beside recent actions. */
 .dashboard #content.colMS { display: grid; grid-template-columns: minmax(0, 1fr) 300px;
   gap: 20px; align-items: start; width: auto; margin-right: 0; }
-.dashboard .titles-and-tools { grid-column: 1 / -1; margin: 0; }
+.dashboard .titles-and-tools, .dashboard .wf { grid-column: 1 / -1; margin: 0; }
 .dashboard #content br.clear { display: none; }
 .dashboard #content-main { display: grid; float: none; width: auto; margin: 0; gap: 16px;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); align-items: start; }

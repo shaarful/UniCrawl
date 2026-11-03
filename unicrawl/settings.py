@@ -59,6 +59,8 @@ TEMPLATES = [
         "DIRS": [BASE_DIR / "unicrawl" / "templates"],
         "APP_DIRS": True,
         "OPTIONS": {
+            # unicrawl is not an installed app, so its tag library is named here.
+            "libraries": {"workflow": "unicrawl.templatetags.workflow"},
             "context_processors": [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",

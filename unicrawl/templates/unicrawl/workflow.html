@@ -1,0 +1,67 @@
+{# Shared by the crawl dashboard and the admin, which name their colours differently. #}
+<style>
+  .wf {
+    --wf-card: var(--panel, var(--body-bg));
+    --wf-text: var(--text, var(--body-fg));
+    --wf-muted: var(--muted, var(--body-quiet-color));
+    --wf-border: var(--border, var(--hairline-color));
+    --wf-link: var(--link-fg, var(--accent));
+    --wf-soft: var(--accent-soft, var(--selected-row));
+    margin-bottom: 20px; padding: 16px; border: 1px solid var(--wf-border); border-radius: 10px;
+    background: var(--wf-card); color: var(--wf-text); font-size: 14px; line-height: 1.5;
+  }
+  .wf-title { margin: 0 0 2px; padding: 0; border: 0; background: none; color: var(--wf-text);
+              font-size: 15px; font-weight: 700; letter-spacing: 0; text-transform: none; }
+  .wf-lead { margin: 0 0 14px; padding: 0; color: var(--wf-muted); }
+  .wf-steps { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 22px;
+              margin: 0; padding: 0; list-style: none; }
+  .wf-step { position: relative; display: flex; flex-direction: column; gap: 4px; margin: 0;
+             padding: 12px; border: 1px solid var(--wf-border); border-radius: 8px;
+             list-style: none; }
+  .wf-step + .wf-step::before { content: "→"; position: absolute; top: 14px; left: -19px;
+                                color: var(--wf-muted); font-size: 16px; line-height: 1; }
+  .wf-step.is-next { border-color: var(--wf-link); box-shadow: inset 0 0 0 1px var(--wf-link); }
+  .wf-head { display: flex; align-items: center; gap: 8px; font-weight: 700; line-height: 1.25; }
+  .wf-number { flex: none; display: grid; place-items: center; width: 24px; height: 24px;
+               border: 1px solid var(--wf-border); border-radius: 50%; color: var(--wf-muted);
+               font-size: 12px; }
+  .is-done .wf-number { border-color: var(--wf-link); background: var(--wf-link); color: var(--wf-card); }
+  .is-next .wf-number { border-color: var(--wf-link); color: var(--wf-link); }
+  .wf-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .wf-hint { flex: 1; margin: 0; padding: 0; color: var(--wf-muted); font-size: 12px; line-height: 1.4; }
+  .wf-status { margin: 0; padding: 0; font-size: 12px; font-weight: 600; }
+  .wf-badge { display: inline-block; margin-left: auto; padding: 1px 7px; border-radius: 999px;
+              background: var(--wf-soft); color: var(--wf-link); font-size: 11px; }
+  .wf-step a.wf-action, .wf-step a.wf-action:link, .wf-step a.wf-action:visited {
+    color: var(--wf-link); font-size: 13px; font-weight: 600; text-decoration: none; }
+  .wf-step a.wf-action:hover { text-decoration: underline; }
+  .wf-note { margin: 12px 0 0; padding: 0; color: var(--wf-muted); font-size: 12px; }
+  @media (max-width: 1199px) {
+    .wf-steps { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+    .wf-step + .wf-step::before { content: "↓"; top: -18px; left: 16px; }
+  }
+</style>
+<section class="wf" aria-labelledby="wf-title">
+  <h2 class="wf-title" id="wf-title">What to do next</h2>
+  <p class="wf-lead">
+    {% if next_step %}Next step: <a class="wf-next-link" href="{{ next_step.url }}">{{ next_step.action }}</a>
+    {% else %}Every step has been done at least once. Keep reviewing new results.{% endif %}
+  </p>
+  <ol class="wf-steps">
+    {% for step in steps %}
+      <li class="wf-step{% if step.done %} is-done{% endif %}{% if step.next %} is-next{% endif %}"
+          {% if step.next %}aria-current="step"{% endif %}>
+        <div class="wf-head">
+          <span class="wf-number">{% if step.done %}✓<span class="wf-hidden"> Done:</span>{% else %}{{ step.number }}{% endif %}</span>
+          <span>{{ step.title }}</span>
+          {% if step.next %}<span class="wf-badge">Next</span>{% endif %}
+        </div>
+        <p class="wf-hint">{{ step.hint }}</p>
+        <p class="wf-status">{{ step.status }}</p>
+        <a class="wf-action" href="{{ step.url }}">{{ step.action }} →</a>
+      </li>
+    {% endfor %}
+  </ol>
+  <p class="wf-note">To repeat crawls on a schedule, mark the source active after a good test run.
+    This also needs the Celery worker and beat running.</p>
+</section>
