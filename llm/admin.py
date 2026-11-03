@@ -2,12 +2,24 @@ import json
 
 import redis
 from django.contrib import admin, messages
-from django.utils.html import format_html
+from django.utils.html import format_html, format_html_join
 
 from raw_content.admin import RawArticleAdmin
 from raw_content.models import RawArticle
 
 from .models import ArticleExtraction, ExtractedEvent
+
+NOT_STATED = "–"
+
+
+def _place(record: dict) -> str:
+    parts = (record["village"], record["district"], record["division"], record["country"])
+    return ", ".join(part for part in parts if part) or NOT_STATED
+
+
+def _count(value: int | None):
+    # Zero is a stated value, unlike null.
+    return NOT_STATED if value is None else value
 
 
 class ArticleExtractionInline(admin.StackedInline):
@@ -18,11 +30,31 @@ class ArticleExtractionInline(admin.StackedInline):
     extra = 0
     verbose_name = "LLM result"
     verbose_name_plural = "LLM result"
-    fields = readonly_fields = (
+    readonly_fields = (
         "status", "is_disease_event", "summary", "extracted_events", "translated_title",
         "translated_body", "input_truncated", "attempts", "error", "llm_model",
         "prompt_version", "prompt_tokens", "response_tokens", "updated_at",
     )
+
+    def get_fieldsets(self, request, obj=None):
+        """`obj` is the article. Fields with nothing to say are left out, and an error,
+        which explains a failed result, stays in view."""
+        extraction = getattr(obj, "extraction", None)
+        main = ["status", "is_disease_event", "summary", "extracted_events"]
+        if extraction is not None and extraction.error:
+            main.append("error")
+        if extraction is not None and extraction.translated_title:
+            main.append("translated_title")
+        if extraction is not None and extraction.translated_body:
+            main.append("translated_body")
+        return (
+            (None, {"fields": main}),
+            ("Processing details", {
+                "classes": ("collapse",),
+                "fields": ("llm_model", "prompt_version", "prompt_tokens", "response_tokens",
+                           "input_truncated", "attempts", "updated_at"),
+            }),
+        )
 
     def has_add_permission(self, request, obj=None):
         return False
@@ -33,7 +65,29 @@ class ArticleExtractionInline(admin.StackedInline):
         if not records:
             return "–"
         return format_html(
-            '<pre style="white-space: pre-wrap; margin: 0">{}</pre>',
+            '<div class="events-wrap"><table class="events-table"><thead><tr>'
+            "<th>Disease</th><th>Host</th><th>Place</th><th>Event date</th>"
+            '<th class="num">Confirmed</th><th class="num">Suspected</th>'
+            '<th class="num">Deaths</th></tr></thead><tbody>{}</tbody></table></div>'
+            '<details class="events-json"><summary>Full record (JSON)</summary>'
+            '<pre class="article-pre">{}</pre></details>',
+            format_html_join(
+                "",
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td>"
+                '<td class="num">{}</td><td class="num">{}</td><td class="num">{}</td></tr>',
+                (
+                    (
+                        record["disease_name"],
+                        record["host"] or NOT_STATED,
+                        _place(record),
+                        record["event_date"] or NOT_STATED,
+                        _count(record["confirmed_case_count"]),
+                        _count(record["suspected_case_count"]),
+                        _count(record["fatality_count"]),
+                    )
+                    for record in records
+                ),
+            ),
             json.dumps(records, indent=2, ensure_ascii=False),
         )
 
@@ -44,13 +98,24 @@ class RawArticleLlmAdmin(RawArticleAdmin):
     change_form_template = "admin/llm/rawarticle_change_form.html"
     inlines = [*RawArticleAdmin.inlines, ArticleExtractionInline]
     actions = [*RawArticleAdmin.actions, "send_to_llm_queue"]
-    list_display = [*RawArticleAdmin.list_display, "llm_status"]
+    # After the crawler's status, and before the dates and link.
+    list_display = [*RawArticleAdmin.list_display[:2], "llm_status",
+                    *RawArticleAdmin.list_display[2:]]
     list_select_related = ("source", "extraction")
 
     @admin.display(description="LLM status", ordering="extraction__status")
-    def llm_status(self, obj: RawArticle) -> str:
+    def llm_status(self, obj: RawArticle):
         extraction = getattr(obj, "extraction", None)  # articles not processed yet have none
-        return extraction.get_status_display() if extraction else "Not processed"
+        if extraction is None:
+            kind, label = "off", "Not processed"
+        else:
+            kind = {
+                ArticleExtraction.Status.COMPLETED: "ok",
+                ArticleExtraction.Status.RETRYING: "warn",
+                ArticleExtraction.Status.FAILED: "bad",
+            }.get(extraction.status, "off")
+            label = extraction.get_status_display()
+        return format_html('<span class="status-pill {}">{}</span>', kind, label)
 
     @admin.action(description="Send selected matched articles to the LLM queue")
     def send_to_llm_queue(self, request, queryset):

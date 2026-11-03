@@ -161,7 +161,9 @@
     const isNew = !first && !seen.has(a.id);
     seen.add(a.id);
     return el("li", {class: isNew ? "new" : null},
-      el("a", {class: "title", href: a.url, target: "_blank", rel: "noopener", title: a.title || a.url},
+      // Only web links: this URL comes from an outside source.
+      el("a", {class: "title", href: /^https?:\/\//i.test(a.url) ? a.url : null, target: "_blank",
+               rel: "noopener", title: a.title || a.url},
          a.title || a.url),
       el("div", {class: "meta"},
         el("span", {class: "pill " + a.status}, a.status),

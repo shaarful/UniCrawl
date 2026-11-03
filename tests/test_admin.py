@@ -45,4 +45,4 @@ def test_raw_article_list_shows_body_source(admin_client):
     page = admin_client.get(reverse("admin:raw_content_rawarticle_changelist"))
     html = page.content.decode()
     assert page.status_code == 200
-    assert "Body source" in html and "eios_snippet" in html
+    assert "news.example.com · eios_snippet" in html

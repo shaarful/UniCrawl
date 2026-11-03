@@ -3,14 +3,7 @@
 {% block extrastyle %}
   {{ block.super }}
   <style>
-    .object-tools form { display: inline; }
-    .object-tools button.refetchlink {
-      display: block; float: left; padding: 3px 12px; border: 0; border-radius: 15px; cursor: pointer;
-      background: var(--object-tools-bg); color: var(--object-tools-fg); font: inherit;
-      font-weight: 400; font-size: 0.6875rem; text-transform: uppercase; letter-spacing: 0.5px;
-    }
-    .object-tools button.refetchlink:hover,
-    .object-tools button.refetchlink:focus { background-color: var(--object-tools-hover-bg); }
+    .object-tools button.refetchlink:disabled { opacity: .6; cursor: default; }
   </style>
 {% endblock %}
 
@@ -21,9 +14,12 @@
       {% csrf_token %}
       <input type="hidden" name="next" value="{{ request.get_full_path }}">
       <button type="submit" class="refetchlink"
-              title="Fetch {{ original.url }} again and update the stored text">↻ Refetch from original link</button>
+              title="Fetch {{ original.url }} again and update the stored text">Refetch from original link</button>
     </form>
   </li>
-  <li><a href="{{ original.url }}" target="_blank" rel="noopener">Open original ↗</a></li>
+  {# Only for web links: this URL comes from an outside source. #}
+  {% if original.url|lower|slice:":7" == "http://" or original.url|lower|slice:":8" == "https://" %}
+    <li><a href="{{ original.url }}" target="_blank" rel="noopener noreferrer">Open original ↗&#xFE0E;</a></li>
+  {% endif %}
   {{ block.super }}
 {% endblock %}

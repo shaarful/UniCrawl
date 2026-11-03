@@ -1,6 +1,7 @@
 """The Process with LLM button and the bulk send-to-queue action."""
 from __future__ import annotations
 
+import re
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -264,7 +265,8 @@ def test_article_list_shows_the_llm_status(admin_client, status, label):
     html = _list_page(admin_client).content.decode()
 
     assert "LLM status" in html
-    assert f'<td class="field-llm_status">{label}</td>' in html
+    pill = rf'<span class="status-pill \w+">{re.escape(label)}</span>'
+    assert re.search(rf'<td class="field-llm_status">{pill}</td>', html)
 
 
 @pytest.mark.django_db
