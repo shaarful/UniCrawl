@@ -32,7 +32,7 @@ def test_header_links_to_the_crawl_dashboard_and_home_has_readable_app_names(adm
     assert "View site" not in content
     assert "Raw content" in content
     assert "Disease keywords" in content
-    assert ">Processing</a>" in content
+    assert ">LLM processing</a>" in content
     assert "LLM extraction" not in content
     assert "Raw_Content" not in content
     assert "Disease_Keywords" not in content
