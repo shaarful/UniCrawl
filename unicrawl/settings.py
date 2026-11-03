@@ -55,7 +55,8 @@ ROOT_URLCONF = "unicrawl.urls"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [],
+        # Searched before the apps, so unicrawl/templates can override the stock admin.
+        "DIRS": [BASE_DIR / "unicrawl" / "templates"],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
@@ -158,6 +159,7 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+STATICFILES_DIRS = [BASE_DIR / "unicrawl" / "static"]
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

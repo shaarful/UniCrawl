@@ -7,6 +7,10 @@ from django.urls import include, path
 from django.views.generic import RedirectView
 
 admin.site.login_template = "crawler/login.html"
+admin.site.site_header = "RZDO EWS"
+admin.site.site_title = "RZDO EWS"
+admin.site.index_title = "Administration"
+admin.site.site_url = None  # the header links to the crawl dashboard instead
 
 urlpatterns = [
     path("", RedirectView.as_view(pattern_name="crawler:dashboard", permanent=False)),

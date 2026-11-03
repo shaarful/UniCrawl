@@ -1,0 +1,32 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block branding %}
+<div id="site-name">
+  <a href="{% url 'admin:index' %}">
+    <span class="site-mark" aria-hidden="true">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="1.8" stroke-linecap="round">
+        <circle cx="12" cy="12" r="9"/>
+        <ellipse cx="12" cy="12" rx="4" ry="9"/>
+        <path d="M3 12h18"/>
+      </svg>
+    </span>
+    {{ site_header }}
+  </a>
+</div>
+{% if user.is_anonymous %}
+  {% include "admin/color_theme_toggle.html" %}
+{% endif %}
+{% endblock %}
+
+{% block userlinks %}
+  <a href="{% url 'crawler:dashboard' %}">Crawl dashboard</a> /
+  {{ block.super }}
+{% endblock %}
+
+{# This block loads last, so the theme comes after every stock admin stylesheet. #}
+{% block responsive %}
+  {{ block.super }}
+  <link rel="stylesheet" href="{% static 'unicrawl/admin_theme.css' %}">
+{% endblock %}
