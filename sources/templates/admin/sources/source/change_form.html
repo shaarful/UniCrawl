@@ -1,0 +1,30 @@
+{% extends "admin/change_form.html" %}
+
+{% block object-tools-items %}
+  <li>
+    <form method="post" action="{% url 'crawler:start' original.pk %}">
+      {% csrf_token %}
+      <button type="submit" title="Crawl this source now and watch it live">Run now</button>
+    </form>
+  </li>
+  <li><a href="{% url 'admin:raw_content_rawarticle_changelist' %}?source__id__exact={{ original.pk }}">Articles</a></li>
+  {% if original.content_type != "eios" %}
+    <li><a href="{{ original.url }}" target="_blank" rel="noopener">Open site ↗&#xFE0E;</a></li>
+  {% endif %}
+  {{ block.super }}
+{% endblock %}
+
+{% block extrabody %}
+  {{ block.super }}
+  <script>
+    // Crawl depth only applies to HTML sources, so hide it for feeds.
+    (() => {
+      const type = document.getElementById("id_content_type");
+      const row = document.querySelector(".field-crawl_depth");
+      if (!type || !row) return;
+      const update = () => { row.hidden = type.value !== "html"; };
+      type.addEventListener("change", update);
+      update();
+    })();
+  </script>
+{% endblock %}
