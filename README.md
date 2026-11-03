@@ -579,21 +579,25 @@ pipenv run python manage.py createsuperuser
 
 ### 5. Seed dev data and run a live crawl
 
-A single command loads disease keywords and three real news sources, then immediately crawls them:
+A single command loads the disease keywords and the WHO-EIOS board, then immediately crawls the board:
 
 ```powershell
 pipenv run python manage.py seed_dev --crawl
 ```
 
 This creates:
-- **16 disease keywords** (dengue, cholera, mpox, avian influenza, ebola, and others)
-- **3 sources** — Outbreak News Today (RSS), ReliefWeb Health Alerts (RSS), WHO Disease Outbreak News (HTML)
+- **26 disease keywords** for anthrax, rabies and avian influenza, in English and Bangla, applying to articles in every language
+- **1 source** — the `RZDO` WHO-EIOS board, not yet scheduled. It needs `EIOS_API_BASE_URL` to be added, and the `EIOS_*` credentials to be crawled
 
-On a clean run it fetches ~30 articles and keyword-matches the disease-relevant ones. Re-running the command is safe — it skips records that already exist. To wipe and start over:
+A first crawl reads the last `EIOS_BACKFILL_HOURS` of the board. Leave out `--crawl` to only load the data. Re-running the command is safe — it skips records that already exist and does not change them.
+
+To wipe and start over:
 
 ```powershell
 pipenv run python manage.py seed_dev --reset --crawl
 ```
+
+`--reset` deletes **all** articles, sources and keywords in the configured database, not only the seeded ones, along with their LLM results and crawl runs. Check `DATABASE_URL` first.
 
 ### 6. Start the Django server
 

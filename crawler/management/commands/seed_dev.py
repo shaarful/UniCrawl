@@ -1,64 +1,63 @@
-"""Dev seed command — loads disease keywords and test sources, then test-crawls one.
+"""Dev seed command: loads the disease keywords and the WHO-EIOS board.
 
 Usage:
     python manage.py seed_dev          # seed only
-    python manage.py seed_dev --crawl  # seed + immediately crawl the first source
+    python manage.py seed_dev --crawl  # seed + immediately crawl the seeded board
 """
 from __future__ import annotations
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
 
+from crawler.fetchers.eios import board_url
 from disease_keywords.models import DiseaseKeyword
 from sources.models import Source
 
+# Blank language: these apply to articles in every language, and to the English
+# translations EIOS supplies for articles in other languages.
+_ALL_LANGUAGES = ""
+
+
+def _bangla_avian_influenza(ya: str) -> str:
+    return (
+        "এভি" + ya + "ান ইনফ্লু" + ya
+        + "েঞ্জা"
+    )
+
+
+_KEYWORDS_BY_DISEASE = {
+    "Anthrax": (
+        "anthrax", "bacillus anthracis",
+        "অ্যানথ্রাক্স", "অ্যানথাক্স", "অ্যান্থ্রাক্স", "এনথ্রাক্স",
+    ),
+    "Rabies": (
+        "rabies", "lyssavirus", "hydrophobia", "rabid dog", "rabid animal",
+        "জলাতঙ্ক",
+    ),
+    "Avian Influenza": (
+        "avian influenza", "avian flu", "bird flu", "hpai",
+        "h5n1", "h5n5", "h5n6", "h5n8", "h7n9", "h9n2",
+        "বার্ড ফ্লু", "এইচ৫এন১",
+        # Bangla sites store this letter both ways, and the filter compares exact text.
+        _bangla_avian_influenza("য়"), _bangla_avian_influenza("য়"),
+    ),
+}
+
+# (disease_name, keyword, language)
 KEYWORDS = [
-    # (disease_name, keyword, language)
-    ("Dengue",          "dengue",           ""),
-    ("Dengue",          "dengue fever",     ""),
-    ("Dengue",          "breakbone fever",  ""),
-    ("Cholera",         "cholera",          ""),
-    ("Cholera",         "vibrio cholerae",  ""),
-    ("Mpox",            "mpox",             ""),
-    ("Mpox",            "monkeypox",        ""),
-    ("Avian Influenza", "bird flu",         ""),
-    ("Avian Influenza", "avian influenza",  ""),
-    ("Avian Influenza", "h5n1",             ""),
-    ("Ebola",           "ebola",            ""),
-    ("Marburg",         "marburg",          ""),
-    ("Rabies",          "rabies",           ""),
-    ("Anthrax",         "anthrax",          ""),
-    ("Plague",          "plague",           ""),
-    ("Plague",          "yersinia pestis",  ""),
+    (disease, keyword, _ALL_LANGUAGES)
+    for disease, keywords in _KEYWORDS_BY_DISEASE.items()
+    for keyword in keywords
 ]
 
-SOURCES = [
-    {
-        "name":          "Outbreak News Today",
-        "url":           "https://outbreaknewstoday.com/feed/",
-        "content_type":  Source.ContentType.RSS,
-        "language_hint": "en",
-        "notes":         "Outbreak News Today — independent disease surveillance blog.",
-    },
-    {
-        "name":          "ReliefWeb Health Alerts",
-        "url":           "https://reliefweb.int/updates/rss.xml?primary_country=0&source=0&theme=3&content-format=Report",
-        "content_type":  Source.ContentType.RSS,
-        "language_hint": "en",
-        "notes":         "ReliefWeb humanitarian health reports feed (theme=Health).",
-    },
-    {
-        "name":          "WHO Disease Outbreak News",
-        "url":           "https://www.who.int/emergencies/disease-outbreak-news",
-        "content_type":  Source.ContentType.HTML,
-        "language_hint": "en",
-        "notes":         "WHO Disease Outbreak News landing page (HTML source).",
-    },
+EIOS_BOARDS = [
+    {"name": "RZDO", "board_id": "1792900211551"},
 ]
 
 
 class Command(BaseCommand):
-    help = "Seed disease keywords and test sources for local development."
+    help = "Seed the disease keywords and the WHO-EIOS board for local development."
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -101,19 +100,28 @@ class Command(BaseCommand):
         User = get_user_model()
         admin = User.objects.filter(is_superuser=True).first()
 
-        sources = SOURCES
+        boards = EIOS_BOARDS
+        if not settings.EIOS_API_BASE_URL:
+            self.stdout.write(self.style.WARNING(
+                "EIOS_API_BASE_URL is not set, so the EIOS boards were not added."
+            ))
+            boards = []
+
         src_created = 0
         source_ids = []
-        for s in sources:
+        for board in boards:
             obj, created = Source.objects.get_or_create(
-                url=s["url"],
+                url=board_url(
+                    settings.EIOS_API_BASE_URL, settings.EIOS_API_VERSION, board["board_id"],
+                ),
                 defaults={
-                    "name":          s["name"],
-                    "content_type":  s["content_type"],
-                    "language_hint": s["language_hint"],
-                    "notes":         s["notes"],
-                    "is_active":     True,
-                    "added_by":      admin,
+                    "name":         board["name"],
+                    "content_type": Source.ContentType.EIOS,
+                    "notes":        f"WHO-EIOS board {board['board_id']} "
+                                    "via the service-to-service API.",
+                    # Scheduled crawling is turned on after a good test run.
+                    "is_active":    False,
+                    "added_by":     admin,
                 },
             )
             if created:
@@ -123,7 +131,7 @@ class Command(BaseCommand):
             self.stdout.write(f"  [{status}] {obj.name}")
 
         self.stdout.write(self.style.SUCCESS(
-            f"Sources: {src_created} created, {len(sources) - src_created} already existed."
+            f"Sources: {src_created} created, {len(boards) - src_created} already existed."
         ))
 
         # --- optional crawl ---
