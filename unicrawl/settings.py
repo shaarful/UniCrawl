@@ -1,7 +1,4 @@
 """Django settings for the UniCrawl service.
-
-Skeleton settings — values are environment-driven via django-environ.
-See SRS RZDO_EWS_SRS_v1.5 sections 2.4 (Operating Environment) and 4 (NFRs).
 """
 from __future__ import annotations
 
