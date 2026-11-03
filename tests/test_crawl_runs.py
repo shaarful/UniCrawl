@@ -283,6 +283,16 @@ def test_dashboard_and_status(admin_client):
 
 
 @pytest.mark.django_db
+def test_dashboard_links_to_source_list_and_add_form(admin_client):
+    content = admin_client.get(reverse("crawler:dashboard")).content.decode()
+
+    for name in ("admin:sources_source_changelist", "admin:sources_source_add"):
+        url = reverse(name)
+        assert f'href="{url}"' in content
+        assert admin_client.get(url).status_code == 200
+
+
+@pytest.mark.django_db
 def test_start_creates_run_and_redirects_to_live_page(admin_client):
     source = _source()
     with patch("crawler.runs._launch") as launch:

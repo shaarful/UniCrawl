@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% block title %}Crawl control{% endblock %} · UniCrawl</title>
+<title>{% block page_title %}{% block title %}Crawl control{% endblock %} · UniCrawl{% endblock %}</title>
 <style>
   :root {
     --bg: #f6f7f9; --panel: #ffffff; --text: #1b1f24; --muted: #646d78;
@@ -72,20 +72,27 @@
   @keyframes slide { from { left: -30%; } to { left: 100%; } }
   .messages { list-style: none; padding: 0; margin: 0 0 16px; }
   .messages li { padding: 10px 14px; border-radius: 8px; background: var(--accent-soft); }
-  @media (max-width: 640px) { main { padding: 16px; } header { padding: 12px 16px; } }
+  @media (max-width: 640px) {
+    main { padding: 16px; }
+    header { flex-wrap: wrap; row-gap: 6px; padding: 12px 16px; }
+    header nav { margin-left: 0; }
+  }
 </style>
 {% block head %}{% endblock %}
 </head>
 <body>
+{% block header %}
 <header>
   <a class="brand" href="{% url 'crawler:dashboard' %}">UniCrawl</a>
   <span class="muted">Crawl control</span>
   <nav>
     <a href="{% url 'crawler:dashboard' %}">Dashboard</a>
+    <a href="{% url 'admin:sources_source_changelist' %}">Sources</a>
     <a href="{% url 'admin:raw_content_rawarticle_changelist' %}">Articles</a>
     <a href="{% url 'admin:index' %}">Admin</a>
   </nav>
 </header>
+{% endblock %}
 <main>
   {% if messages %}
     <ul class="messages">{% for m in messages %}<li>{{ m }}</li>{% endfor %}</ul>

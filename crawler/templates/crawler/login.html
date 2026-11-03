@@ -1,0 +1,216 @@
+{% extends "crawler/base.html" %}
+
+{% block page_title %}{% if form.errors %}Error: {% endif %}Sign in · RZDO EWS{% endblock %}
+
+{% block head %}
+<style>
+  body { background: var(--panel); }
+  main { max-width: none; padding: 0; }
+  .login-layout { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+                  min-height: 100vh; min-height: 100svh; }
+
+  /* About panel: the same dark blue in light and dark mode. */
+  .login-about { position: relative; display: flex; flex-direction: column; gap: 40px;
+                 padding: 48px clamp(32px, 5vw, 72px); overflow: hidden; color: #fff;
+                 background: linear-gradient(150deg, #123a86, #0b1f47 70%); }
+  .login-about > :not(.login-rings) { position: relative; }
+  .login-rings { position: absolute; right: -170px; bottom: -170px; width: 560px; height: 560px;
+                 color: #8db2ff; opacity: .35; }
+  .login-brand { display: flex; align-items: center; gap: 12px; font-size: 20px; font-weight: 700; }
+  .login-mark { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 10px;
+                background: #fff; color: #123a86; }
+  .login-intro { margin-block: auto; max-width: 520px; }
+  .login-intro h2 { margin: 0 0 12px; font-size: clamp(26px, 2.6vw, 34px); line-height: 1.2; }
+  .login-intro p { margin: 0; color: #cbd8f3; font-size: 16px; }
+  .login-steps { display: grid; gap: 18px; max-width: 520px; margin: 0; padding: 0; list-style: none; }
+  .login-steps li { display: flex; gap: 14px; }
+  .login-steps svg { flex: none; width: 36px; height: 36px; padding: 8px; border-radius: 9px;
+                     background: rgb(255 255 255 / 12%); }
+  .login-steps strong { display: block; font-size: 15px; }
+  .login-steps span { color: #cbd8f3; }
+
+  /* Sign-in form. */
+  .login-side { display: grid; place-items: center; padding: 48px 24px; }
+  .login-form { width: 100%; max-width: 360px; }
+  .login-form h1 { font-size: 26px; }
+  .login-lead { margin: 0 0 24px; color: var(--muted); font-size: 15px; }
+  .login-field { margin-bottom: 16px; }
+  .login-field label { display: block; margin-bottom: 6px; font-weight: 600; }
+  .login-field input { width: 100%; height: 44px; padding: 0 12px; border: 1px solid var(--border);
+                       border-radius: 8px; background: var(--bg); color: var(--text);
+                       font: inherit; font-size: 16px; }
+  .login-field input:focus { outline: none; border-color: var(--accent);
+                             box-shadow: 0 0 0 3px var(--accent-soft); }
+  .login-field input[aria-invalid="true"] { border-color: var(--bad); }
+  .login-field .errorlist { list-style: none; margin: 6px 0 0; padding: 0; color: var(--bad);
+                            font-size: 13px; }
+  .login-error { margin: 0 0 16px; padding: 10px 12px; border-radius: 8px;
+                 background: var(--bad-soft); color: var(--bad); }
+  .login-submit { justify-content: center; width: 100%; height: 44px; margin-top: 4px; }
+  .login-submit:hover { filter: brightness(1.08); }
+
+  .password-wrap { position: relative; }
+  .password-wrap input { padding-right: 46px; }
+  .password-wrap input::-ms-reveal, .password-wrap input::-ms-clear { display: none; }
+  .password-toggle { position: absolute; top: 2px; right: 2px; display: grid; place-items: center;
+                     width: 40px; height: 40px; padding: 0; border: 0; border-radius: 6px;
+                     background: none; color: var(--muted); cursor: pointer; }
+  .password-toggle[hidden] { display: none; }
+  .password-toggle:hover { color: var(--text); }
+  .password-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .password-toggle .icon-hide, .password-toggle.is-visible .icon-show { display: none; }
+  .password-toggle.is-visible .icon-hide { display: block; }
+
+  @media (prefers-color-scheme: dark) {
+    .login-submit.primary { color: #0f1216; }
+  }
+  @media (max-width: 860px) {
+    .login-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
+    .login-about { gap: 16px; padding: 24px 16px; }
+    .login-intro h2 { margin: 0; font-size: 17px; font-weight: 500; line-height: 1.4; }
+    .login-intro p, .login-steps { display: none; }
+    .login-rings { right: -120px; bottom: -120px; width: 300px; height: 300px; }
+    .login-side { place-items: start center; padding: 32px 16px; }
+  }
+</style>
+{% endblock %}
+
+{% block header %}{% endblock %}
+
+{% block content %}
+<div class="login-layout">
+  <section class="login-about">
+    <svg class="login-rings" viewBox="0 0 560 560" fill="none" stroke="currentColor" aria-hidden="true">
+      <circle cx="280" cy="280" r="70"/>
+      <circle cx="280" cy="280" r="140"/>
+      <circle cx="280" cy="280" r="210"/>
+      <circle cx="280" cy="280" r="279"/>
+      <path d="M280 1v558M1 280h558"/>
+    </svg>
+
+    <div class="login-brand">
+      <span class="login-mark" aria-hidden="true">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.8" stroke-linecap="round">
+          <circle cx="12" cy="12" r="9"/>
+          <ellipse cx="12" cy="12" rx="4" ry="9"/>
+          <path d="M3 12h18"/>
+        </svg>
+      </span>
+      RZDO EWS
+    </div>
+
+    <div class="login-intro">
+      <h2>Regional Zoonotic Disease Observatory and Early Warning System</h2>
+      <p>Public health intelligence from open-source digital channels on selected zoonotic
+         diseases in South Asia.</p>
+    </div>
+
+    <ul class="login-steps">
+      <li>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="7"/><path d="m21 21-4.5-4.5"/>
+        </svg>
+        <div>
+          <strong>Collect</strong>
+          <span>Scheduled ingestion from EIOS feeds and public health portals.</span>
+        </div>
+      </li>
+      <li>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4 6h16M4 12h16M4 18h10"/>
+        </svg>
+        <div>
+          <strong>Translate and extract</strong>
+          <span>Regional-language reports become structured records of disease, host, place, date and cases.</span>
+        </div>
+      </li>
+      <li>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M6 9a6 6 0 0 1 12 0c0 6 2 8 2 8H4s2-2 2-8"/><path d="M10 21h4"/>
+        </svg>
+        <div>
+          <strong>Review and alert</strong>
+          <span>Moderators validate events for the dashboard, email alerts and newsletters.</span>
+        </div>
+      </li>
+    </ul>
+  </section>
+
+  <section class="login-side">
+    <div class="login-form">
+      <h1>Sign in</h1>
+      <p class="login-lead">Enter your account details to continue.</p>
+
+      {% for error in form.non_field_errors %}
+        <p class="login-error" role="alert">{{ error }}</p>
+      {% endfor %}
+      {% if user.is_authenticated %}
+        <p class="login-error" role="alert">
+          You are signed in as {{ username }}, but this account can't open this page.
+          Sign in with a different account to continue.
+        </p>
+      {% endif %}
+
+      <form action="{{ app_path }}" method="post">
+        {% csrf_token %}
+        <input type="hidden" name="next" value="{{ next }}">
+        <div class="login-field">
+          <label for="{{ form.username.id_for_label }}">Username</label>
+          {{ form.username }}
+          {{ form.username.errors }}
+        </div>
+        <div class="login-field">
+          <label for="{{ form.password.id_for_label }}">Password</label>
+          <div class="password-wrap">
+            {{ form.password }}
+            {# Shown by the script below, so it never appears when it could not work. #}
+            <button class="password-toggle" type="button" aria-label="Show password"
+                    title="Show password" hidden>
+              <svg class="icon-show" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                   stroke-linejoin="round" aria-hidden="true">
+                <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+              <svg class="icon-hide" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                   stroke-linejoin="round" aria-hidden="true">
+                <path d="M10.6 5.1A10 10 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3 3.9"/>
+                <path d="M6.5 6.6A17 17 0 0 0 2 12s3.6 7 10 7a10 10 0 0 0 5.4-1.6"/>
+                <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>
+                <path d="m3 3 18 18"/>
+              </svg>
+            </button>
+          </div>
+          {{ form.password.errors }}
+        </div>
+        <button class="btn primary login-submit" type="submit">Sign in</button>
+      </form>
+    </div>
+  </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (() => {
+    const input = document.getElementById("{{ form.password.id_for_label }}");
+    const toggle = document.querySelector(".password-toggle");
+    toggle.hidden = false;
+    toggle.addEventListener("click", () => {
+      const show = input.type === "password";
+      input.type = show ? "text" : "password";
+      toggle.classList.toggle("is-visible", show);
+      const label = show ? "Hide password" : "Show password";
+      toggle.setAttribute("aria-label", label);
+      toggle.title = label;
+    });
+    // A visible password must not be saved to the browser's form history.
+    input.form.addEventListener("submit", () => { input.type = "password"; });
+  })();
+</script>
+{% endblock %}
