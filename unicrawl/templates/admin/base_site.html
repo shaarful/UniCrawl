@@ -20,6 +20,9 @@
 {% endif %}
 {% endblock %}
 
+{# Pages for records written by the crawler and the LLM worker, which share a layout. #}
+{% block bodyclass %}{{ block.super }}{% if opts.app_label == "raw_content" or opts.app_label == "crawler" or opts.app_label == "llm" %} record-page{% endif %}{% endblock %}
+
 {% block userlinks %}
   <a href="{% url 'crawler:dashboard' %}">Crawl dashboard</a> /
   {{ block.super }}

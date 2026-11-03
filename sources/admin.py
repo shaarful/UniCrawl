@@ -7,6 +7,8 @@ from django.utils import timezone
 from django.utils.html import format_html
 from django.utils.timesince import timesince
 
+from unicrawl.admin_display import pill
+
 from .forms import SourceForm, interval_minutes, keywords_as_text
 from .models import Source
 
@@ -117,8 +119,8 @@ class SourceAdmin(admin.ModelAdmin):
         else:
             kind, label = "off", "Not scheduled"
         return format_html(
-            '<span class="status-pill {}">{}</span><span class="source-every">{}</span>',
-            kind, label, _every(obj.crawl_interval_seconds),
+            '{}<span class="source-every">{}</span>',
+            pill(kind, label), _every(obj.crawl_interval_seconds),
         )
 
     @admin.display(description="Last crawled", ordering="last_crawled_at", empty_value="Never")

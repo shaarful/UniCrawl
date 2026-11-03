@@ -218,7 +218,7 @@ def test_page_shows_events_as_a_table_and_keeps_the_full_record(admin_client):
     content = admin_client.get(_change_url(article)).content.decode()
 
     assert "<th>Disease</th>" in content
-    assert "<td>anthrax</td>" in content
+    assert ">anthrax</a></td>" in content
     assert "<td>Gangni, Meherpur, Bangladesh</td>" in content
     assert '<td class="num">62</td>' in content
     assert "Full record (JSON)" in content

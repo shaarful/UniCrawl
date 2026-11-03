@@ -258,6 +258,7 @@ input:focus, textarea:focus, select:focus, .vTextField:focus { border-color: var
 .submit-row { border: 1px solid var(--hairline-color); border-radius: 10px; background: var(--body-bg); }
 .submit-row a.deletelink { border-radius: 7px; }
 .submit-row a.deletelink:link, .submit-row a.deletelink:visited,
+.submit-row a.closelink:link, .submit-row a.closelink:visited,
 .delete-confirmation form input[type="submit"] { color: #ffffff; }
 .submit-row a.closelink { border-radius: 7px; }
 .object-tools a, .object-tools a:link, .object-tools a:visited,
@@ -339,65 +340,75 @@ input:focus, textarea:focus, select:focus, .vTextField:focus { border-color: var
 
 /* Articles: list */
 .article-title, .article-from { display: block; }
-.article-title { display: -webkit-box; min-width: 220px; max-width: 340px; overflow: hidden; font-weight: 600;
+.article-title { display: -webkit-box; min-width: 170px; max-width: 340px; overflow: hidden; font-weight: 600;
   -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .article-from { max-width: 340px; overflow: hidden; color: var(--body-quiet-color); font-size: .75rem;
   font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
-.model-rawarticle .field-published, .model-rawarticle .field-open_link { white-space: nowrap; }
-.model-rawarticle .field-published .article-from { max-width: none; }
+.record-page :is(.field-published, .field-open_link, .field-started, .field-live_link, .field-updated,
+  .field-tokens, .field-event_day) { white-space: nowrap; }
+.record-page :is(.field-published, .field-started, .field-updated) .article-from { max-width: none; }
+.record-page :is(.column-processed, .field-processed, .column-new, .field-new, .column-matched, .field-matched,
+  .column-sent, .field-sent, .column-dups, .field-dups, .column-failures, .field-failures,
+  .column-event_count, .field-event_count, .column-confirmed, .field-confirmed, .column-suspected,
+  .field-suspected, .column-deaths, .field-deaths) { text-align: right; font-variant-numeric: tabular-nums; }
+.cell-clamp { display: -webkit-box; min-width: 150px; max-width: 300px; overflow: hidden;
+  -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 
 @media (max-width: 1535px) {
   /* The filters move under the table, which leaves it room for every column. */
-  .model-rawarticle #changelist .changelist-form-container { flex-direction: column; align-items: stretch; }
-  .model-rawarticle #changelist .changelist-form-container:has(#changelist-filter) > div { max-width: 100%;
+  .record-page #changelist .changelist-form-container { flex-direction: column; align-items: stretch; }
+  .record-page #changelist .changelist-form-container:has(#changelist-filter) > div { max-width: 100%;
     width: 100%; }
-  .model-rawarticle #changelist-filter { flex: none; margin: 0; border-top: 1px solid var(--hairline-color);
+  .record-page #changelist-filter { flex: none; margin: 0; border-top: 1px solid var(--hairline-color);
     border-left: 0; }
 }
 
 /* Articles: detail */
-.model-rawarticle .form-row { padding: 12px 16px; }
-.model-rawarticle .aligned .form-row > div { width: 100%; max-width: 100%; }
-.model-rawarticle .readonly { overflow-wrap: anywhere; }
-.model-rawarticle fieldset.module { margin-bottom: 20px; }
-.model-rawarticle .field-body .readonly, .model-rawarticle .field-translated_body .readonly {
+.record-page .form-row { padding: 12px 16px; }
+.record-page .aligned .form-row > div { width: 100%; max-width: 100%; }
+.record-page .readonly { overflow-wrap: anywhere; }
+.record-page fieldset.module { margin-bottom: 20px; }
+.record-page .field-body .readonly, .record-page .field-translated_body .readonly {
   max-height: 28em; overflow: auto; font-size: .9375rem; line-height: 1.6; }
 .article-pre { max-height: 32em; margin: 0; overflow: auto; white-space: pre-wrap; }
 /* The heading above these says it already, and everything here is read-only. */
-.model-rawarticle .field-body label, #content .model-rawarticle .inline-related h3 { display: none; }
+.record-page :is(.field-body, .field-timeline) label { display: none; }
 #content .inline-group .inline-related h3 { display: none; }
-.model-rawarticle .form-row .help { display: none; }
-.model-rawarticle .inline-group { margin-bottom: 20px; }
-.model-rawarticle .inline-group > fieldset.module, .model-rawarticle .inline-related fieldset.module {
+.record-page .form-row .help { display: none; }
+.record-page .inline-group { margin-bottom: 20px; }
+.record-page .inline-group > fieldset.module, .record-page .inline-related fieldset.module {
   margin: 0; border: 0; box-shadow: none; }
-.model-rawarticle .inline-group > fieldset.module:not(:has(.inline-related))::after {
+.record-page .inline-group > fieldset.module:not(:has(.inline-related))::after {
   content: "Not processed yet. Articles that match a keyword when crawled are sent automatically; you can also use Process with LLM.";
   display: block; padding: 12px 16px; color: var(--body-quiet-color); }
-.model-rawarticle .inline-related fieldset.collapse { border-top: 1px solid var(--hairline-color); }
+.record-page .inline-related fieldset.collapse { border-top: 1px solid var(--hairline-color); }
 .events-wrap { overflow-x: auto; }
 .events-table { width: 100%; border-collapse: collapse; }
 .events-table th, .events-table td { padding: 7px 10px; border-bottom: 1px solid var(--hairline-color);
   overflow-wrap: normal; text-align: left; vertical-align: top; }
 .events-table th { background: var(--darkened-bg); color: var(--body-quiet-color); font-size: .75rem;
   white-space: nowrap; }
+.events-table .nowrap { white-space: nowrap; }
+.events-table .wrap { min-width: 240px; overflow-wrap: anywhere; }
 .events-table .num { text-align: right; font-variant-numeric: tabular-nums; }
 .events-json { margin-top: 10px; }
 .events-json summary { color: var(--link-fg); cursor: pointer; font-size: .8125rem; }
 /* The result reads best straight after the article, before the collapsed technical details. */
-#rawarticle_form > div { display: flex; flex-direction: column; }
-#rawarticle_form > div > fieldset.collapse { order: 1; }
-#rawarticle_form > div > .submit-row { order: 2; }
-.model-rawarticle.change-form #content-main { container-type: inline-size; }
+.record-page.change-form #content-main form > div { display: flex; flex-direction: column; }
+.record-page.change-form #content-main form > div > fieldset.collapse { order: 1; }
+.record-page.change-form #content-main form > div > .submit-row { order: 2; }
+.record-page.change-form #content-main { container-type: inline-size; }
 @container (min-width: 620px) {
-  .model-rawarticle fieldset.module.aligned:not(.collapse) { display: grid;
+  .record-page fieldset.module.aligned:not(.collapse) { display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .model-rawarticle fieldset.module.aligned:not(.collapse) > .fieldset-heading,
-  .model-rawarticle fieldset.module.aligned:not(.collapse) > :is(.field-body, .field-summary,
-    .field-extracted_events, .field-translated_title, .field-translated_body, .field-error) {
+  .record-page fieldset.module.aligned:not(.collapse) > .fieldset-heading,
+  .record-page fieldset.module.aligned:not(.collapse) > :is(.field-body, .field-summary,
+    .field-extracted_events, .field-events_table, .field-timeline, .field-translated_title,
+    .field-translated_body, .field-error, .field-response_action, .field-article_summary) {
     grid-column: 1 / -1; }
 }
 @container (min-width: 900px) {
-  .model-rawarticle fieldset.module.aligned:not(.collapse) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .record-page fieldset.module.aligned:not(.collapse) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 /* Messages */

@@ -3,8 +3,9 @@ from collections import Counter
 from urllib.parse import urlsplit
 
 from django.contrib import admin, messages
-from django.utils.formats import date_format
 from django.utils.html import format_html
+
+from unicrawl.admin_display import pill, short_date, titled, with_note
 
 from .models import RawArticle
 
@@ -27,10 +28,6 @@ def _external_link(url: str, text: str | None = None):
     if not _is_web_link(url):
         return url or ""
     return format_html(_NEW_TAB_LINK, url, text or url)
-
-
-def _short_date(value) -> str | None:
-    return date_format(value, "M j, Y") if value else None
 
 
 def _status_label(article: RawArticle) -> tuple[str, str]:
@@ -112,15 +109,11 @@ class RawArticleAdmin(admin.ModelAdmin):
             urlsplit(obj.url).netloc,
             self.body_source(obj),
         ]
-        return format_html(
-            '<span class="article-title">{}</span><span class="article-from">{}</span>',
-            obj.title or obj.url, " · ".join(part for part in details if part),
-        )
+        return titled(obj.title or obj.url, " · ".join(part for part in details if part))
 
     @admin.display(description="Status", ordering="processing_status")
     def status(self, obj: RawArticle):
-        kind, label = _status_label(obj)
-        return format_html('<span class="status-pill {}">{}</span>', kind, label)
+        return pill(*_status_label(obj))
 
     @admin.display(description="Diseases")
     def diseases(self, obj: RawArticle) -> str:
@@ -132,9 +125,8 @@ class RawArticleAdmin(admin.ModelAdmin):
 
     @admin.display(description="Published", ordering="published_at")
     def published(self, obj: RawArticle):
-        return format_html(
-            '{}<span class="article-from">Fetched {}</span>',
-            _short_date(obj.published_at) or "–", _short_date(obj.fetched_at),
+        return with_note(
+            short_date(obj.published_at) or "–", f"Fetched {short_date(obj.fetched_at)}",
         )
 
     @admin.display(description="")
