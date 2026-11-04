@@ -791,14 +791,16 @@ docker compose exec db psql -U rzdo rzdo
 
 Restarting `rzdo` interrupts any manual crawl in progress. The run is marked *interrupted*, and the next run picks up from the source's last completed crawl.
 
-**Resetting the database.** This permanently deletes all data, including Redis's queued articles:
+**Resetting the database.** This permanently deletes all data, including admin users, then runs the migrations. It asks you to type the database name first:
 
 ```bash
-docker compose --profile "*" down -v --remove-orphans
-docker compose up -d
+docker compose exec rzdo python manage.py reset_db
 docker compose exec rzdo python manage.py createsuperuser
 docker compose exec rzdo python manage.py seed_dev
+docker compose restart rzdo
 ```
+
+Wait for any running crawl to finish first. `reset_db` does not touch Redis. To also clear its queue, delete all the volumes instead with `docker compose --profile "*" down -v --remove-orphans`, then `docker compose up -d`.
 
 ---
 
