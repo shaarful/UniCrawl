@@ -753,7 +753,7 @@ Certbot adds the HTTPS settings and the HTTP redirect to `/etc/nginx/sites-avail
 
 The dashboard is at `https://rzdo.sharful.com/`. Migrations run on every start. To deploy a new version, `git pull` and run `docker compose up -d --build` again.
 
-For LLM extraction, put the service account key at `secrets/gcp-key.json` and make it readable by the container user (`chown 1000 secrets/gcp-key.json`). Plain `docker compose up -d` does not start any extraction; this only enables the options below.
+For LLM extraction, put the service account key at `secrets/gcp-key.json` and make it readable by the container user (`chown 1000 secrets/gcp-key.json`). `RZDO_GCP_CREDENTIALS` in `.env` holds its path inside the container, `/secrets/gcp-key.json`. Plain `docker compose up -d` does not start any extraction; this only enables the options below.
 
 **What works with Redis off** (`LLM_QUEUE_ENABLED=False`, the default in `.env.docker.example`):
 
