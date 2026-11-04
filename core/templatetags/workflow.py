@@ -111,7 +111,7 @@ def build_steps() -> list[dict]:
     return steps
 
 
-@register.inclusion_tag("unicrawl/workflow.html")
+@register.inclusion_tag("core/workflow.html")
 def workflow() -> dict:
     steps = build_steps()
     return {"steps": steps, "next_step": next((s for s in steps if s["next"]), None)}

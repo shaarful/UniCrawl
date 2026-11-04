@@ -205,14 +205,14 @@ def test_close_stops_the_browser(renderer):
 
 
 def test_browser_identifies_itself_as_the_crawler():
-    renderer = BrowserRenderer("UniCrawl/test")
+    renderer = BrowserRenderer("RZDO/test")
     playwright = MagicMock()
     with patch("playwright.sync_api.sync_playwright") as sync_playwright:
         sync_playwright.return_value.start.return_value = playwright
         renderer._start()
 
     browser = playwright.chromium.launch.return_value
-    browser.new_context.assert_called_once_with(user_agent="UniCrawl/test")
+    browser.new_context.assert_called_once_with(user_agent="RZDO/test")
 
 
 def test_browser_that_is_not_installed_says_how_to_install_it():
@@ -264,7 +264,7 @@ def javascript_site():
 @pytest.mark.django_db
 def test_real_browser_renders_and_leaves_the_database_usable(javascript_site):
     """Not mocked: Playwright on the crawl's own thread makes Django refuse database calls."""
-    renderer = BrowserRenderer("UniCrawl/test")
+    renderer = BrowserRenderer("RZDO/test")
     try:
         try:
             result = renderer.render(javascript_site)
@@ -373,7 +373,7 @@ def test_a_home_page_list_uses_article_like_links():
 
 def _robots(fetch):
     fetcher = MagicMock()
-    fetcher.user_agent = "UniCrawl/0.1"
+    fetcher.user_agent = "RZDO/0.1"
     fetcher.fetch.side_effect = fetch
     return RobotsRules(fetcher), fetcher
 

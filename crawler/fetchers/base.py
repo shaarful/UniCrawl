@@ -38,7 +38,7 @@ class HttpFetcher:
     the network.
     """
 
-    USER_AGENT = "UniCrawl/0.1 (+disease surveillance crawler)"
+    USER_AGENT = "RZDO/0.1 (+disease surveillance crawler)"
     DEFAULT_TIMEOUT = 30.0
 
     def __init__(

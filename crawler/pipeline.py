@@ -691,6 +691,11 @@ def _process_article(source: Source, article: _Article, fetched_at) -> str:
     if not is_matched:
         return _progress.STORED
 
+    if not settings.LLM_QUEUE_ENABLED:
+        # Switched off on purpose, so the crawl spends no time trying to reach Redis.
+        # The article stays MATCHED and can be sent later with the admin action.
+        return _progress.MATCHED
+
     # Publish to LLM queue (≤60s SLA)
     try:
         from crawler.publisher import publish_matched

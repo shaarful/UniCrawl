@@ -1,6 +1,6 @@
-# UniCrawl — Universal Web Crawler Service
+# RZDO — Universal Web Crawler Service
 
-UniCrawl is the autonomous ingestion component of the **Regional Zoonotic Disease Observatory and Early Warning System (RZDO-EWS)**. It crawls administrator-configured open-source URLs — news portals, RSS feeds, and government health bulletins — filters content against an active disease keyword list, and hands matched articles to a downstream LLM extraction pipeline within 60 seconds.
+This service is the autonomous ingestion component of the **Regional Zoonotic Disease Observatory and Early Warning System (RZDO-EWS)**. It crawls administrator-configured open-source URLs — news portals, RSS feeds, and government health bulletins — filters content against an active disease keyword list, and hands matched articles to a downstream LLM extraction pipeline within 60 seconds.
 
 This service covers the crawler requirements of the RZDO-EWS SRS, plus LLM extraction in the `llm` app, which runs as its own worker process. All other microservices (validation/moderation, analytics, dashboard) are out of scope here.
 
@@ -16,8 +16,9 @@ This service covers the crawler requirements of the RZDO-EWS SRS, plus LLM extra
 6. [Configuration Reference](#configuration-reference)
 7. [Development Setup](#development-setup)
 8. [Running the Service](#running-the-service)
-9. [Running Tests](#running-tests)
-10. [Open Questions (TBD)](#open-questions-tbd)
+9. [Docker Deployment (Dev Server)](#docker-deployment-dev-server)
+10. [Running Tests](#running-tests)
+11. [Open Questions (TBD)](#open-questions-tbd)
 
 ---
 
@@ -25,7 +26,7 @@ This service covers the crawler requirements of the RZDO-EWS SRS, plus LLM extra
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                          UniCrawl Service                               │
+│                          RZDO Service                                   │
 │                                                                         │
 │  ┌──────────┐  every 30s  ┌────────────┐  per source  ┌─────────────┐  │
 │  │  Celery  │────────────▶│ Scheduler  │─────────────▶│   Fetcher   │  │
@@ -49,7 +50,7 @@ This service covers the crawler requirements of the RZDO-EWS SRS, plus LLM extra
 │                                                                         │
 │  ┌────────────┐   ┌──────────────────┐   ┌───────────────────────────┐  │
 │  │  /health   │   │ Django REST API  │   │  Redis Stream             │  │
-│  │ (liveness) │   │  Source CRUD     │   │  unicrawl.matched_articles│  │
+│  │ (liveness) │   │  Source CRUD     │   │  rzdo.matched_articles    │  │
 │  └────────────┘   └──────────────────┘   │  ────────────────────────▶│  │
 │                                          │  LLM Processing Service   │  │
 │                                          └───────────────────────────┘  │
@@ -117,11 +118,11 @@ Each fetcher implements the `Fetcher` protocol: `fetch(url) → FetchResult`.
 - **List pages (`crawl_depth` 2+):** the list page itself is not stored. Links under its own path are followed (`/news` → `/news/some-story`). If there are none, links are judged by how they look, which is less reliable. Links in site navigation, headers and footers, links to other sites, and links to files are ignored.
 - **Each crawl:** already stored pages are not requested again, so a crawl only reads what is new. A page that fails is not stored, so the next crawl retries it. Only the list page itself is read, so older articles on later pages are not collected.
 - **Limits:** `robots.txt` is respected for followed links, requests are spaced by `CRAWLER_LINK_DELAY_SECONDS`, and a run stops at `CRAWLER_MAX_PAGES_PER_RUN` pages.
-- **No circumvention:** the browser identifies itself as UniCrawl. A site that refuses the crawler (HTTP 403, for example) fails with that error and is not worked around.
+- **No circumvention:** the browser identifies itself as RZDO. A site that refuses the crawler (HTTP 403, for example) fails with that error and is not worked around.
 - **Pages with no text** are not stored; the crawl reports a warning instead. **Refetch** also renders pages for HTML sources. EIOS article links still use plain requests only.
 
 `HTMLFetcher` and `RSSFetcher` share `HttpFetcher` (`fetchers/base.py`), which uses **httpx** with:
-- A `UniCrawl/0.1` User-Agent
+- A `RZDO/0.1` User-Agent
 - 30-second timeout
 - Automatic redirect following (records the final URL separately from the original)
 - Non-2xx responses returned as-is — the pipeline inspects `status_code` and raises for 4xx/5xx
@@ -227,7 +228,7 @@ failed      →  unrecoverable pipeline error; see structured error log
 
 ### 8. Publisher (`crawler/publisher.py`)
 
-Appends keyword-matched articles to a **Redis Stream** (`LLM_QUEUE_NAME`, default `unicrawl.matched_articles`) using `XADD`. At-least-once delivery is provided by the Redis Streams consumer-group model on the LLM service side (`XREADGROUP` / `XACK`). The article's `processing_status` only advances to `published` after a confirmed `XADD`.
+Appends keyword-matched articles to a **Redis Stream** (`LLM_QUEUE_NAME`, default `rzdo.matched_articles`) using `XADD`. At-least-once delivery is provided by the Redis Streams consumer-group model on the LLM service side (`XREADGROUP` / `XACK`). The article's `processing_status` only advances to `published` after a confirmed `XADD`.
 
 **Stream message fields** (all strings — Redis Streams requirement):
 
@@ -475,6 +476,18 @@ ExtractedEvent (only disease is required)
 
 ## Configuration Reference
 
+Settings live in `core/settings/`, and `DJANGO_SETTINGS_MODULE` picks which file is used:
+
+| File | Used for | Behaviour |
+|---|---|---|
+| `base.py` | Shared by the other two | Apps, middleware, crawler, LLM and EIOS settings |
+| `dev.py` | Local work and the dev server. Default for `manage.py`. | Has local defaults: `DEBUG` on, a development secret key and SQLite |
+| `prod.py` | Production. Default for `wsgi.py` and `asgi.py`. | `DEBUG` always off and HTTPS only. Will not start without `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`, `DATABASE_URL` and `CELERY_BROKER_URL`. |
+
+Celery has no default, so `DJANGO_SETTINGS_MODULE` must be set for it: `.env.example` sets it for local work, and `compose.yml` sets it for every container.
+
+`prod.py` also reads `DJANGO_BEHIND_HTTPS_PROXY` (set to `True` behind a proxy that handles HTTPS and overwrites `X-Forwarded-Proto`) and `DJANGO_SECURE_HSTS_SECONDS` (default `0`).
+
 All settings are environment-variable-driven via `django-environ`. Copy `.env.example` to `.env` and adjust.
 
 | Variable | Default | Description |
@@ -486,7 +499,8 @@ All settings are environment-variable-driven via `django-environ`. Copy `.env.ex
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis for publisher + Django cache |
 | `CELERY_BROKER_URL` | `memory://` | Celery message broker |
 | `CELERY_RESULT_BACKEND` | `cache+memory://` | Celery result store |
-| `LLM_QUEUE_NAME` | `unicrawl.matched_articles` | Redis Stream key for LLM handoff |
+| `LLM_QUEUE_ENABLED` | `True` | `False`: crawls keep matched articles as `matched` and do not contact Redis |
+| `LLM_QUEUE_NAME` | `rzdo.matched_articles` | Redis Stream key for LLM handoff |
 | `LLM_DEAD_LETTER_QUEUE_NAME` | `<LLM_QUEUE_NAME>.dead` | Stream for messages that could not be extracted |
 | `LLM_CONSUMER_GROUP` | `llm-extraction` | Redis consumer group of the LLM worker |
 | `RZDO_GCP_PROJECT` | *(required by the worker)* | Google Cloud project for Vertex AI |
@@ -666,7 +680,7 @@ For automated crawls you need Redis running and three processes in separate term
 **Start Redis** (Docker is the easiest option on Windows):
 
 ```powershell
-docker run -d -p 6379:6379 --name unicrawl-redis redis:7-alpine
+docker run -d -p 6379:6379 --name rzdo-redis redis:7-alpine
 ```
 
 **Three terminals:**
@@ -676,13 +690,13 @@ docker run -d -p 6379:6379 --name unicrawl-redis redis:7-alpine
 pipenv run python manage.py runserver
 
 # Terminal 2 — Celery worker (processes crawl_source tasks)
-pipenv run celery -A unicrawl worker -l info
+pipenv run celery -A core worker -l info
 
 # Terminal 3 — Celery beat (fires the scheduler tick every 30 s)
-pipenv run celery -A unicrawl beat -l info
+pipenv run celery -A core beat -l info
 ```
 
-With all three running, Beat automatically enqueues any source whose `next_crawl_at ≤ now` every 30 seconds. The worker picks them up and runs the full pipeline. Keyword-matched articles are pushed onto the `unicrawl.matched_articles` Redis Stream for the LLM worker.
+With all three running, Beat automatically enqueues any source whose `next_crawl_at ≤ now` every 30 seconds. The worker picks them up and runs the full pipeline. Keyword-matched articles are pushed onto the `rzdo.matched_articles` Redis Stream for the LLM worker.
 
 **LLM extraction** runs as a separate process. Set `RZDO_GCP_PROJECT` and `RZDO_GCP_CREDENTIALS`, then:
 
@@ -699,6 +713,83 @@ The worker needs Redis 6.2+ (for `XAUTOCLAIM`). Each article sent to Gemini cost
 **Health check endpoint:** `GET /health/` returns `{"status": "ok"}` — used by Kubernetes liveness/readiness probes.
 
 **Source management API:** `GET / POST / PUT / DELETE /sources/` — DRF endpoints for Source CRUD. New sources default to `is_active=False`; activate them after a successful test-crawl.
+
+---
+
+## Docker Deployment (Dev Server)
+
+`docker compose up` starts only PostgreSQL, the web app and nginx. Nothing crawls or calls the LLM by itself: Redis, Celery and the LLM worker are defined in `compose.yml` but stay off until their profile is switched on.
+
+The server's own nginx holds ports 80 and 443 and handles HTTPS, then forwards to the nginx container on a local port:
+
+```
+browser → server nginx :443 → 127.0.0.1:8100 → nginx container → web:8000 (gunicorn)
+```
+
+**First deployment**, on a server with Docker and Compose v2:
+
+```bash
+git clone https://github.com/shaarful/UniCrawl.git
+cd UniCrawl
+cp .env.docker.example .env
+nano .env   # set DJANGO_SECRET_KEY, POSTGRES_PASSWORD and the EIOS_* values
+
+docker compose up -d --build
+docker compose exec web python manage.py createsuperuser
+docker compose exec web python manage.py seed_dev
+```
+
+**Then connect the server's nginx and add HTTPS.** This is needed only once:
+
+```bash
+ss -tlnp | grep 8100     # should print nothing; if not, change WEB_PORT and host-rzdo.conf
+sudo cp nginx/host-rzdo.conf /etc/nginx/sites-available/rzdo
+sudo ln -s /etc/nginx/sites-available/rzdo /etc/nginx/sites-enabled/rzdo
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot --nginx -d rzdo.sharful.com --redirect
+```
+
+Certbot adds the HTTPS settings and the HTTP redirect to `/etc/nginx/sites-available/rzdo`, and renews the certificate by itself.
+
+The dashboard is at `https://rzdo.sharful.com/`. Migrations run on every start. To deploy a new version, `git pull` and run `docker compose up -d --build` again.
+
+For LLM extraction, put the service account key at `secrets/gcp-key.json` and make it readable by the container user (`chown 1000 secrets/gcp-key.json`). Plain `docker compose up -d` does not start any extraction; this only enables the options below.
+
+**What works with Redis off** (`LLM_QUEUE_ENABLED=False`, the default in `.env.docker.example`):
+
+| Action | With Redis off |
+|---|---|
+| **▶ Run now** on the dashboard | Works. Matched articles are stored and stay `matched`. |
+| LLM button for one article (article page or run page) | Works. It calls Gemini directly, without the queue. |
+| Admin action *Send selected matched articles to the LLM queue* | Shows an error until Redis is running. |
+
+Keep `LLM_QUEUE_ENABLED=False` while Redis is off. With it on, every matched article waits several seconds for the failed Redis connection, which slows a large crawl by hours.
+
+**Turning the rest on later:**
+
+```bash
+docker compose --profile redis up -d       # Redis only
+docker compose --profile scheduler up -d   # Redis + Celery: automatic crawls
+docker compose --profile llm up -d         # Redis + LLM worker: automatic extraction
+
+# Process what is queued now, then exit
+docker compose run --rm llm-worker python manage.py run_llm_worker --once
+
+# Stop them again; the data stays in its volumes
+docker compose --profile scheduler --profile llm stop redis celery-worker celery-beat llm-worker
+```
+
+For crawled articles to reach the queue by themselves, also set `LLM_QUEUE_ENABLED=True` in `.env` and run `docker compose up -d` so the web container picks it up. Add the same `--profile` flags you are using to that command, so the workers pick it up too. With it off, only the admin action sends articles to the queue.
+
+**Other useful commands:**
+
+```bash
+docker compose ps                  # what is running
+docker compose logs -f web         # follow the web logs
+docker compose exec db psql -U rzdo rzdo
+```
+
+Restarting `web` interrupts any manual crawl in progress. The run is marked *interrupted*, and the next run picks up from the source's last completed crawl. `docker compose down -v` deletes the database volume.
 
 ---
 

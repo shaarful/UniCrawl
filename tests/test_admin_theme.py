@@ -5,7 +5,7 @@ from django.urls import reverse
 
 
 def test_theme_stylesheet_can_be_found():
-    assert finders.find("unicrawl/admin_theme.css")
+    assert finders.find("core/admin_theme.css")
 
 
 @pytest.mark.django_db
@@ -19,7 +19,7 @@ def test_admin_pages_use_the_theme_and_brand(admin_client):
 
         assert response.status_code == 200
         content = response.content.decode()
-        assert "unicrawl/admin_theme.css" in content
+        assert "core/admin_theme.css" in content
         assert "RZDO EWS" in content
         assert "Django administration" not in content
 

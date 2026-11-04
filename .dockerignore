@@ -1,0 +1,29 @@
+.git
+.gitignore
+.dockerignore
+Dockerfile
+compose.yml
+nginx/
+
+# Secrets are passed in at run time and must never end up in an image layer.
+.env
+.env.*
+secrets/
+
+# Local data and tooling
+db.sqlite3*
+staticfiles/
+.claude/
+.idea/
+.vscode/
+.venv/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.py[cod]
+*.log
+
+# Not needed to run the service
+tests/
+srs/
+*.md

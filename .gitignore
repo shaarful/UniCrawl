@@ -60,4 +60,6 @@ Thumbs.db
 srs/_extracted/
 .env*
 !.env.example
+!.env.docker.example
+secrets/
 AGENTS.md

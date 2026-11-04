@@ -7,7 +7,7 @@ from django.utils import timezone
 from django.utils.html import format_html
 from django.utils.timesince import timesince
 
-from unicrawl.admin_display import pill
+from core.admin_display import pill
 
 from .forms import SourceForm, interval_minutes, keywords_as_text
 from .models import Source

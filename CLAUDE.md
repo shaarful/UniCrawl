@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-UniCrawl is the **universal web crawler** component of the **Regional Zoonotic Disease Observatory and Early Warning System (RZDO-EWS)** described in `srs/RZDO_EWS_SRS_v1.13.docx`. It autonomously collects disease-related content from administrator-defined open-source URLs (news portals, RSS feeds, government health bulletins) and forwards keyword-matched content to a downstream LLM extraction pipeline.
+This repository is the **universal web crawler** component of the **Regional Zoonotic Disease Observatory and Early Warning System (RZDO-EWS)** described in `srs/RZDO_EWS_SRS_v1.13.docx`. It autonomously collects disease-related content from administrator-defined open-source URLs (news portals, RSS feeds, government health bulletins) and forwards keyword-matched content to a downstream LLM extraction pipeline.
 
 The Crawler Service is one of five microservices in the broader RZDO-EWS architecture. **In scope here are the crawler and LLM extraction** — validation/moderation, analytics, and the dashboard are separate services and not implemented in this repo.
 

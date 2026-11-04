@@ -5,8 +5,8 @@ from django.urls import reverse
 from django.utils import timezone
 from django.utils.html import format_html, format_html_join
 
+from core.admin_display import pill, short_datetime, titled, with_note
 from crawler.runs import mark_stale_runs
-from unicrawl.admin_display import pill, short_datetime, titled, with_note
 
 from .models import CrawlRun
 

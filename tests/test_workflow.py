@@ -5,12 +5,12 @@ import pytest
 from django.urls import reverse
 from django.utils import timezone
 
+from core.templatetags.workflow import build_steps
 from crawler.models import CrawlRun
 from disease_keywords.models import DiseaseKeyword
 from llm.models import ArticleExtraction, ExtractedEvent
 from raw_content.models import RawArticle
 from sources.models import Source
-from unicrawl.templatetags.workflow import build_steps
 
 
 def _source(**kwargs):

@@ -21,6 +21,8 @@ numpy = "*"
 sentence-transformers = "*"
 google-genai = "*"
 playwright = "*"
+gunicorn = "*"
+whitenoise = "*"
 
 [dev-packages]
 pytest = "*"

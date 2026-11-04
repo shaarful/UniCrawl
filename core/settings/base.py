@@ -1,16 +1,14 @@
-"""Django settings for the UniCrawl service.
-"""
+"""Settings shared by every environment. dev.py and prod.py extend this file."""
 from __future__ import annotations
 
 from pathlib import Path
 
 import environ
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+# core/settings/base.py -> the repository root
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 env = environ.Env(
-    DJANGO_DEBUG=(bool, False),
-    DJANGO_ALLOWED_HOSTS=(list, ["localhost", "127.0.0.1"]),
     CRAWLER_DEFAULT_INTERVAL_SECONDS=(int, 3600),
     CRAWLER_RETRY_BACKOFF_MINUTES=(list, [1, 4, 16]),
     CRAWLER_SEMANTIC_DEDUP_THRESHOLD=(float, 0.85),
@@ -20,9 +18,7 @@ env = environ.Env(
 )
 environ.Env.read_env(BASE_DIR / ".env")
 
-SECRET_KEY = env("DJANGO_SECRET_KEY", default="dev-insecure-key-change-me")
-DEBUG = env("DJANGO_DEBUG")
-ALLOWED_HOSTS = env("DJANGO_ALLOWED_HOSTS")
+CSRF_TRUSTED_ORIGINS = env.list("DJANGO_CSRF_TRUSTED_ORIGINS", default=[])
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -42,6 +38,8 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    # Serves the admin and dashboard static files under gunicorn, where DEBUG is off.
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -50,17 +48,17 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
-ROOT_URLCONF = "unicrawl.urls"
+ROOT_URLCONF = "core.urls"
 
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        # Searched before the apps, so unicrawl/templates can override the stock admin.
-        "DIRS": [BASE_DIR / "unicrawl" / "templates"],
+        # Searched before the apps, so core/templates can override the stock admin.
+        "DIRS": [BASE_DIR / "core" / "templates"],
         "APP_DIRS": True,
         "OPTIONS": {
-            # unicrawl is not an installed app, so its tag library is named here.
-            "libraries": {"workflow": "unicrawl.templatetags.workflow"},
+            # core is not an installed app, so its tag library is named here.
+            "libraries": {"workflow": "core.templatetags.workflow"},
             "context_processors": [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
@@ -70,24 +68,8 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = "unicrawl.wsgi.application"
-ASGI_APPLICATION = "unicrawl.asgi.application"
-
-# SRS §6.1: PostgreSQL 18+ with PostGIS. Falls back to sqlite for skeleton bring-up.
-DATABASES = {
-    "default": env.db_url(
-        "DATABASE_URL",
-        default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
-    ),
-}
-if DATABASES["default"]["ENGINE"] == "django.db.backends.sqlite3":
-    # The crawl dashboard runs crawls in a background thread while pages poll
-    # progress: WAL lets reads proceed during writes, and the timeout waits out
-    # brief write locks instead of failing with "database is locked".
-    DATABASES["default"].setdefault("OPTIONS", {}).update({
-        "timeout": 20,
-        "init_command": "PRAGMA journal_mode=WAL;",
-    })
+WSGI_APPLICATION = "core.wsgi.application"
+ASGI_APPLICATION = "core.asgi.application"
 
 REDIS_URL = env("REDIS_URL", default="redis://localhost:6379/0")
 
@@ -97,7 +79,7 @@ CACHES = {
 
 CELERY_BROKER_URL = env("CELERY_BROKER_URL", default="memory://")
 CELERY_RESULT_BACKEND = env("CELERY_RESULT_BACKEND", default="cache+memory://")
-CELERY_TASK_DEFAULT_QUEUE = "unicrawl.default"
+CELERY_TASK_DEFAULT_QUEUE = "rzdo.default"
 
 # Beat: poll for due sources every 30 s
 CELERY_BEAT_SCHEDULE = {
@@ -123,7 +105,9 @@ CRAWLER_BROWSER_TIMEOUT_SECONDS = env.int("CRAWLER_BROWSER_TIMEOUT_SECONDS", def
 CRAWLER_MAX_PAGES_PER_RUN = env.int("CRAWLER_MAX_PAGES_PER_RUN", default=50)
 CRAWLER_LINK_DELAY_SECONDS = env.float("CRAWLER_LINK_DELAY_SECONDS", default=1.0)
 
-LLM_QUEUE_NAME = env("LLM_QUEUE_NAME", default="unicrawl.matched_articles")
+# False: crawls leave matched articles as "matched" and do not contact Redis.
+LLM_QUEUE_ENABLED = env.bool("LLM_QUEUE_ENABLED", default=True)
+LLM_QUEUE_NAME = env("LLM_QUEUE_NAME", default="rzdo.matched_articles")
 LLM_DEAD_LETTER_QUEUE_NAME = env("LLM_DEAD_LETTER_QUEUE_NAME", default=f"{LLM_QUEUE_NAME}.dead")
 LLM_CONSUMER_GROUP = env("LLM_CONSUMER_GROUP", default="llm-extraction")
 LLM_MODEL = env("LLM_MODEL", default="gemini-3.5-flash-lite")
@@ -161,7 +145,7 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
-STATICFILES_DIRS = [BASE_DIR / "unicrawl" / "static"]
+STATICFILES_DIRS = [BASE_DIR / "core" / "static"]
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

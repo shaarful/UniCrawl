@@ -5,7 +5,7 @@ from urllib.parse import urlsplit
 from django.contrib import admin, messages
 from django.utils.html import format_html
 
-from unicrawl.admin_display import pill, short_date, titled, with_note
+from core.admin_display import pill, short_date, titled, with_note
 
 from .models import RawArticle
 

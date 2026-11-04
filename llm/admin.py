@@ -6,9 +6,9 @@ from django.db.models import Count
 from django.urls import reverse
 from django.utils.html import format_html, format_html_join
 
+from core.admin_display import pill, short_date, short_datetime, titled, with_note
 from raw_content.admin import RawArticleAdmin
 from raw_content.models import RawArticle
-from unicrawl.admin_display import pill, short_date, short_datetime, titled, with_note
 
 from .models import ArticleExtraction, ExtractedEvent
 

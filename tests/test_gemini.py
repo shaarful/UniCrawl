@@ -32,7 +32,7 @@ The surveillance platform is also supporting disease prevention efforts through 
 def main():
     sys.stdout.reconfigure(encoding="utf-8")  # regional-language text in a Windows console
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "unicrawl.settings")
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "core.settings.dev")
 
     import django
 

@@ -27,7 +27,7 @@ def test_html_fetcher_returns_response_and_sends_html_accept_header():
     assert result.url == "https://example.com/article"
     assert result.final_url == "https://example.com/article"
     assert "text/html" in captured["request"].headers["accept"]
-    assert "UniCrawl" in captured["request"].headers["user-agent"]
+    assert "RZDO" in captured["request"].headers["user-agent"]
 
 
 def test_rss_fetcher_sends_feed_accept_header():

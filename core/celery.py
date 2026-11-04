@@ -5,12 +5,10 @@ the scheduler module is implemented.
 """
 from __future__ import annotations
 
-import os
-
 from celery import Celery
 
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "unicrawl.settings")
-
-app = Celery("unicrawl")
+# DJANGO_SETTINGS_MODULE must come from the environment. A default here would run whenever
+# the core package is imported and override the production default in wsgi.py and asgi.py.
+app = Celery("core")
 app.config_from_object("django.conf:settings", namespace="CELERY")
 app.autodiscover_tasks()

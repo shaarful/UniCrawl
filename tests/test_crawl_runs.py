@@ -138,6 +138,29 @@ def test_queue_failure_counts_as_matched_not_error():
 
 
 @pytest.mark.django_db
+def test_queue_switched_off_skips_publishing_without_a_warning(settings):
+    from raw_content.models import RawArticle
+
+    settings.LLM_QUEUE_ENABLED = False
+    run = create_run(_source().pk)
+    fetcher = _fetcher([_item("a", "Ebola outbreak"), _item("b", "Football")])
+    with (
+        patch("crawler.pipeline._fetcher_for", return_value=fetcher),
+        patch("crawler.pipeline._fetch_original_page",
+              side_effect=lambda u: (_page(f"Text of {u} " * 20), "")),
+        patch("crawler.publisher.publish_matched") as publish_matched,
+    ):
+        execute_run(run.pk)
+    run.refresh_from_db()
+
+    publish_matched.assert_not_called()
+    assert run.status == CrawlRun.Status.SUCCEEDED
+    assert (run.matched, run.published, run.errors) == (1, 0, 0)
+    assert not [e for e in run.events if e["level"] == "warning"]
+    assert RawArticle.objects.get(is_keyword_matched=True).processing_status == "matched"
+
+
+@pytest.mark.django_db
 def test_execute_run_reports_eios_windows_as_progress():
     source = _source()
     run = create_run(source.pk)

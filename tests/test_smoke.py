@@ -8,9 +8,9 @@ from django.test import Client
 
 
 MODULES = [
-    "unicrawl.settings",
-    "unicrawl.urls",
-    "unicrawl.celery",
+    "core.settings.dev",
+    "core.urls",
+    "core.celery",
     "sources.models",
     "sources.serializers",
     "sources.views",
