@@ -10,7 +10,7 @@ from django.contrib import messages
 from django.contrib.admin.views.decorators import staff_member_required
 from django.core.exceptions import PermissionDenied
 from django.db.models import CASCADE, Count, Q
-from django.http import JsonResponse
+from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
@@ -19,6 +19,7 @@ from django.views.decorators.http import require_http_methods, require_POST
 from crawler.forms import EIOSBoardForm
 from crawler.models import CrawlRun
 from crawler.refetch import refetch_article
+from crawler.run_summary import TILES, run_articles, summarize
 from crawler.runs import (
     AlreadyRunning,
     delete_articles_and_recrawl,
@@ -255,18 +256,21 @@ def run_detail(request, run_id: int):
 def run_status(request, run_id: int):
     mark_stale_runs()
     run = get_object_or_404(CrawlRun.objects.select_related("source"), pk=run_id)
-    articles = RawArticle.objects.none()
-    if run.fetched_at:
-        articles = RawArticle.objects.filter(
-            source_id=run.source_id,
-            created_at__gte=run.started_at,
-            fetched_at=run.fetched_at,
-        ).order_by("-id")
+    articles = run_articles(run).order_by("-id")
     return JsonResponse({
         "run": _run_json(run),
         "latest": [_article_json(a) for a in articles[:FEED_SIZE]],
         "matched": [_article_json(a) for a in articles.filter(is_keyword_matched=True)[:FEED_SIZE]],
     })
+
+
+@staff_member_required
+def run_summary(request, run_id: int, tile: str):
+    """The per-site table shown when a number on the run page is clicked."""
+    if tile not in TILES:
+        raise Http404
+    run = get_object_or_404(CrawlRun.objects.select_related("source"), pk=run_id)
+    return JsonResponse(summarize(run, tile))
 
 
 @staff_member_required

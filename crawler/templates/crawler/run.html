@@ -5,9 +5,13 @@
   .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px;
            margin-bottom: 20px; }
   .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
-          padding: 12px 14px; }
-  .stat .label { font-size: 12px; color: var(--muted); }
-  .stat .value { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+          padding: 12px 14px; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+  .stat:hover, .stat[aria-expanded="true"] { border-color: var(--accent); }
+  .stat[aria-expanded="true"] { background: var(--accent-soft); }
+  .stat .label { display: block; font-size: 12px; color: var(--muted); }
+  .stat .value { display: block; font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  #summary .table-wrap { max-height: 420px; overflow-y: auto; }
+  #summary thead th { position: sticky; top: 0; background: var(--panel); }
   .stat.matched .value { color: var(--warn); }
   .stat.published .value { color: var(--ok); }
   .stat.errors .value { color: var(--bad); }
@@ -74,6 +78,11 @@
 
 <div class="stats" id="stats"></div>
 
+<section class="panel" id="summary" style="display:none">
+  <h2 id="summary-title"></h2>
+  <div id="summary-body"></div>
+</section>
+
 <div id="notice" role="status"></div>
 
 <div class="cols">
@@ -96,7 +105,11 @@
 {% block scripts %}
 <script>
   const STATUS_URL = "{% url 'crawler:run-status' run.pk %}";
+  const SUMMARY_URL = "{% url 'crawler:run-summary' run.pk 'TILE' %}";
+  const SUMMARY_REFRESH_MS = 5000;
   const seen = new Set();
+  let openTile = null;
+  let summaryLoadedAt = 0;
   let first = true;
   let polling = true;
 
@@ -134,19 +147,99 @@
       ? `Last update ${ago(run.heartbeat_at)}` : `Started ${new Date(run.started_at).toLocaleString()} (${run.trigger})`;
     document.getElementById("error").replaceChildren(run.error ? el("div", {class: "errbox"}, run.error) : "");
 
-    document.getElementById("stats").replaceChildren(...STATS
-      .filter(([, , only]) => only !== "eios" || run.is_eios)
-      .map(([key, label]) => {
-        const share = key === "full_text" && run.processed
-          ? el("span", {class: "muted small"}, ` ${Math.round(100 * run.full_text / run.processed)}%`)
-          : null;
-        return el("div", {class: "stat " + key}, el("div", {class: "label"}, label),
-                  el("div", {class: "value"}, fmt(run[key]), share));
-      }));
+    renderStats(run);
     document.getElementById("matched-count").textContent = run.matched ? `(${fmt(run.matched)})` : "";
 
     document.getElementById("events").replaceChildren(...run.events.slice().reverse().map(e =>
       el("li", {class: e.level}, `${new Date(e.t).toLocaleTimeString()}  ${e.msg}`)));
+  }
+
+  // The tiles are built once and only their numbers change: replacing them on every poll
+  // could lose a click made while the crawl is running.
+  function renderStats(run) {
+    const box = document.getElementById("stats");
+    if (!box.children.length) {
+      box.append(...STATS
+        .filter(([, , only]) => only !== "eios" || run.is_eios)
+        .map(([key, label]) => {
+          const tile = el("button", {type: "button", class: "stat " + key, "data-key": key,
+                                     "aria-expanded": "false", "aria-controls": "summary"},
+                          el("span", {class: "label"}, label), el("span", {class: "value"}));
+          tile.addEventListener("click", () => toggleSummary(key, label));
+          return tile;
+        }));
+    }
+    for (const tile of box.children) {
+      const key = tile.dataset.key;
+      const share = key === "full_text" && run.processed
+        ? el("span", {class: "muted small"}, ` ${Math.round(100 * run.full_text / run.processed)}%`)
+        : "";
+      tile.querySelector(".value").replaceChildren(fmt(run[key]), share);
+    }
+  }
+
+  function toggleSummary(key, label) {
+    openTile = openTile === key ? null : key;
+    for (const tile of document.getElementById("stats").children) {
+      tile.setAttribute("aria-expanded", String(tile.dataset.key === openTile));
+    }
+    document.getElementById("summary").style.display = openTile ? "" : "none";
+    if (!openTile) return;
+    document.getElementById("summary-title").textContent = `${label} by type of site`;
+    document.getElementById("summary-body").replaceChildren(el("div", {class: "muted"}, "Loading…"));
+    loadSummary();
+  }
+
+  async function loadSummary() {
+    const tile = openTile;
+    const body = document.getElementById("summary-body");
+    summaryLoadedAt = Date.now();
+    try {
+      const res = await fetch(SUMMARY_URL.replace("TILE", tile), {headers: {Accept: "application/json"}});
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const data = await res.json();
+      if (tile === openTile) renderSummary(body, data);  // another tile may have been opened since
+    } catch (e) {
+      if (tile === openTile) body.replaceChildren(el("div", {class: "errbox"}, `Could not load this table (${e.message}).`));
+    }
+  }
+
+  function renderSummary(body, data) {
+    if (!data.recorded) {
+      body.replaceChildren(el("div", {class: "muted"},
+        "Types of site were not recorded for this older run. New runs will show them here."));
+      return;
+    }
+    if (!data.rows.length) {
+      body.replaceChildren(el("div", {class: "muted"}, "No articles here."));
+      return;
+    }
+    const showReason = data.rows.some(row => row.reasons.length);
+    const snippetShare = row => row.snippet
+      ? `${fmt(row.snippet)} (${Math.round(100 * row.snippet / row.articles)}%)` : "0";
+    const reasonLines = row => row.reasons.map(r => el("div", {}, `${r.reason}: ${fmt(r.count)}`));
+    const columns = [
+      ["Type of site", row => row.site_type],
+      ["Articles", row => fmt(row.articles), true],
+      ...(data.show_text_sources ? [
+        ["Our crawl", row => fmt(row.our_crawl), true],
+        ["EIOS text", row => fmt(row.eios_text), true],
+        ["Snippet only", snippetShare, true],
+      ] : []),
+      ...(showReason ? [[data.reason_label, reasonLines]] : []),
+    ];
+    const cell = (tag, numeric, text) => el(tag, {class: numeric ? "num" : null}, text);
+    const count = (n, noun) => `${fmt(n)} ${noun}${n === 1 ? "" : "s"}`;
+    body.replaceChildren(
+      el("div", {class: "muted small", style: "margin-bottom:8px"},
+         `${count(data.total, "article")} from ${count(data.rows.length, "type")} of site`),
+      !data.is_running && data.total !== data.tile_count ? el("div", {class: "muted small", style: "margin-bottom:8px"},
+        `The tile counted ${fmt(data.tile_count)} during the crawl. This table shows the articles as they are now, ` +
+        "so articles that failed, were refetched, sent or deleted can make it differ.") : "",
+      el("div", {class: "table-wrap"}, el("table", {},
+        el("thead", {}, el("tr", {}, columns.map(([title, , numeric]) => cell("th", numeric, title)))),
+        el("tbody", {}, data.rows.map(row =>
+          el("tr", {}, columns.map(([, value, numeric]) => cell("td", numeric, value(row)))))))));
   }
 
   function bodyInfo(a) {
@@ -224,6 +317,7 @@
       renderFeed("matched", data.matched, "Nothing matched yet.");
       renderFeed("latest", data.latest, running ? "Waiting for articles…" : "No new articles in this run.");
       first = false;
+      if (openTile && (!running || Date.now() - summaryLoadedAt >= SUMMARY_REFRESH_MS)) loadSummary();
     } catch (e) {
       document.getElementById("heartbeat").textContent = "Connection lost — retrying…";
     }

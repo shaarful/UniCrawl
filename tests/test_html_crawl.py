@@ -68,8 +68,8 @@ class RecordingProgress(NullProgress):
     def event(self, level, message):
         self.events.append((level, message))
 
-    def skip(self, count=1):
-        self.skipped += count
+    def skip(self, site_type):
+        self.skipped += 1
 
     def messages(self, level):
         return [message for found, message in self.events if found == level]

@@ -12,6 +12,7 @@ urlpatterns = [
     path("sources/<int:source_id>/recrawl/", views.source_recrawl, name="source-recrawl"),
     path("runs/<int:run_id>/", views.run_detail, name="run"),
     path("runs/<int:run_id>/status.json", views.run_status, name="run-status"),
+    path("runs/<int:run_id>/summary/<slug:tile>.json", views.run_summary, name="run-summary"),
     path("runs/<int:run_id>/stop/", views.run_stop, name="run-stop"),
     path("articles/<int:article_id>/refetch/", views.article_refetch, name="article-refetch"),
 ]

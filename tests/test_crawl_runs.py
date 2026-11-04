@@ -213,7 +213,7 @@ def test_already_stored_stretch_still_honours_stop():
     run = create_run(_source().pk)
     CrawlRun.objects.filter(pk=run.pk).update(cancel_requested=True)
     with pytest.raises(P.CrawlCancelled):
-        P.RunProgress(run).skip()
+        P.RunProgress(run).skip("Web news")
 
 
 @pytest.mark.django_db

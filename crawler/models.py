@@ -56,6 +56,9 @@ class CrawlRun(models.Model):
     full_text = models.PositiveIntegerField(
         default=0, help_text="EIOS articles whose full body was retrieved (not just the snippet).",
     )
+    # Skipped and failed articles are not stored, so their types of site are only known from here.
+    skipped_by_type = models.JSONField(default=dict, blank=True)
+    errors_by_type = models.JSONField(default=dict, blank=True)
     events = models.JSONField(default=list, blank=True)
     error = models.TextField(blank=True)
     cancel_requested = models.BooleanField(default=False)

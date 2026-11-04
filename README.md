@@ -645,7 +645,11 @@ Open `http://127.0.0.1:8000/` (staff login required). Only `runserver` is needed
   - **Progress:** the bar, current stage, elapsed time, articles/s and time remaining. EIOS
     progress follows the time range being read, one window at a time.
   - **Counters:** processed, new, keyword-matched, sent to the LLM queue, duplicates (from
-    other sources), already stored (this source had them; skipped), errors.
+    other sources), already stored (this source had them; skipped), errors. Click a counter
+    to see its articles by type of site (web news, wire, GPHIN, social media…). EIOS runs also
+    split them into our crawl, EIOS text and snippet only, with the reasons pages could not
+    be crawled. Runs from before this table was added have no types for already stored and
+    errors.
   - **Feeds:** live lists of matched and latest articles. Each matched article shows whether
     it has the full text or only the EIOS snippet.
   - **Activity:** a log of stages, warnings (e.g. Redis unreachable) and errors.

@@ -52,7 +52,10 @@ class NullProgress:
     def article(self, outcome: str) -> None:
         pass
 
-    def skip(self, count: int = 1) -> None:
+    def skip(self, site_type: str) -> None:
+        pass
+
+    def article_failed(self, site_type: str, reason: str) -> None:
         pass
 
     def full_text(self) -> None:
@@ -140,10 +143,17 @@ class RunProgress(NullProgress):
             run.percent = start + (end - start) * done
         self.flush()
 
-    def skip(self, count: int = 1) -> None:
-        """Items the source had already stored — not reprocessed."""
-        self.run.skipped += count
+    def skip(self, site_type: str) -> None:
+        """An item the source had already stored — not reprocessed."""
+        run = self.run
+        run.skipped += 1
+        run.skipped_by_type[site_type] = run.skipped_by_type.get(site_type, 0) + 1
         self.flush()  # long already-stored stretches still report and honour Stop
+
+    def article_failed(self, site_type: str, reason: str) -> None:
+        """An article could not be processed, so it was not stored."""
+        reasons = self.run.errors_by_type.setdefault(site_type, {})
+        reasons[reason] = reasons.get(reason, 0) + 1
 
     def full_text(self) -> None:
         """An article got its full body (original page or EIOS fullText)."""
@@ -169,6 +179,7 @@ class RunProgress(NullProgress):
             processed=run.processed, new=run.new, matched=run.matched,
             published=run.published, duplicates=run.duplicates, errors=run.errors,
             skipped=run.skipped, full_text=run.full_text, events=run.events,
+            skipped_by_type=run.skipped_by_type, errors_by_type=run.errors_by_type,
             heartbeat_at=timezone.now(),
         )
         if CrawlRun.objects.filter(pk=run.pk, cancel_requested=True).exists():

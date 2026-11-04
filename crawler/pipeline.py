@@ -26,6 +26,7 @@ from django.utils import timezone
 from crawler import progress as _progress
 from crawler.dedup import content_hash as _ch
 from crawler.dedup import url_fingerprint as _uf
+from crawler.site_types import GPHIN_SOURCE_IDS, is_social_media, site_type
 from sources.models import Source
 
 if TYPE_CHECKING:
@@ -158,7 +159,7 @@ def _single_page_candidates(
 ) -> Iterator[_Article]:
     """Crawl depth 1: the source URL is itself the article."""
     if _already_stored(source, _uf.fingerprint(landing.url)):
-        progress.skip()
+        progress.skip(site_type(source.content_type))
         progress.stage("Processing 0 new articles (1 already stored)", percent=0)
         progress.segment(0, 100, 0)
         return
@@ -222,7 +223,7 @@ def _followed_candidates(
             continue
         seen.add(fp)
         if _already_stored(source, fp):
-            progress.skip()
+            progress.skip(site_type(source.content_type))
             continue
         if requested >= max_pages:
             progress.event(
@@ -293,11 +294,6 @@ def _html_candidates(
 # items can land in a window after it was polled. Re-polled items are skipped.
 _EIOS_OVERLAP = timedelta(minutes=15)
 
-# Original links that cannot be fetched anonymously: GPHIN is subscription-only,
-# and social posts sit behind anti-bot walls (no circumvention, SRS §2.5).
-_EIOS_UNFETCHABLE_SOURCE_IDS = frozenset({"gphin"})
-_EIOS_UNFETCHABLE_SOURCE_TYPE_PREFIXES = ("socialmedia",)
-
 # Stop asking EIOS for `fullText` after this many detail responses without it —
 # the service account lacks full-text access until WHO grants it.
 _EIOS_FULLTEXT_MAX_MISSES = 3
@@ -321,9 +317,19 @@ def _join_text(*parts: str | None) -> str:
 
 def _eios_link_fetchable(item: dict) -> bool:
     src = item.get("source") or {}
-    if src.get("id") in _EIOS_UNFETCHABLE_SOURCE_IDS:
-        return False
-    return not (src.get("type") or "").lower().startswith(_EIOS_UNFETCHABLE_SOURCE_TYPE_PREFIXES)
+    return src.get("id") not in GPHIN_SOURCE_IDS and not is_social_media(src.get("type"))
+
+
+def _eios_item_site_type(source: Source, item: dict) -> str:
+    src = item.get("source") or {}
+    return site_type(src.get("type") or source.content_type, src.get("id") in GPHIN_SOURCE_IDS)
+
+
+def _article_site_type(source: Source, article: _Article) -> str:
+    eios_item = (article.metadata or {}).get("eios")
+    if eios_item is not None:
+        return _eios_item_site_type(source, eios_item)
+    return site_type(article.source_type)
 
 
 def _fetch_original_page(link: str) -> tuple[ExtractedContent | None, str]:
@@ -526,7 +532,8 @@ def _eios_candidates(
                 continue
             fp = _uf.fingerprint(link)
             if fp in seen or _already_stored(source, fp):
-                progress.skip()  # re-polled in the overlap window — already stored
+                # Re-polled in the overlap window — already stored.
+                progress.skip(_eios_item_site_type(source, item))
                 continue
             seen.add(fp)
 
@@ -752,7 +759,8 @@ def run_for_source(source_id: int, progress: _progress.NullProgress | None = Non
             candidates = _unseen(source, extracted)
             skipped = len(extracted) - len(candidates)
             bound.info("pipeline.candidates", count=len(candidates), already_stored=skipped)
-            progress.skip(skipped)
+            for _ in range(skipped):
+                progress.skip(site_type(source.content_type))
             progress.stage(
                 f"Processing {len(candidates)} new articles ({skipped} already stored)",
                 percent=0,
@@ -777,6 +785,7 @@ def run_for_source(source_id: int, progress: _progress.NullProgress | None = Non
             except Exception as exc:
                 bound.exception("pipeline.article_error", url=article.url, error=str(exc))
                 progress.event("error", f"{article.url} — {type(exc).__name__}: {exc}")
+                progress.article_failed(_article_site_type(source, article), type(exc).__name__)
                 outcome = _progress.ERROR
             progress.article(outcome)
     finally:
