@@ -723,7 +723,7 @@ The worker needs Redis 6.2+ (for `XAUTOCLAIM`). Each article sent to Gemini cost
 The server's own nginx holds ports 80 and 443 and handles HTTPS, then forwards to the nginx container on a local port:
 
 ```
-browser → server nginx :443 → 127.0.0.1:8100 → nginx container → web:8000 (gunicorn)
+browser → server nginx :443 → 127.0.0.1:8100 → nginx container → rzdo:8000 (gunicorn)
 ```
 
 **First deployment**, on a server with Docker and Compose v2:
@@ -735,8 +735,8 @@ cp .env.docker.example .env
 nano .env   # set DJANGO_SECRET_KEY, POSTGRES_PASSWORD and the EIOS_* values
 
 docker compose up -d --build
-docker compose exec web python manage.py createsuperuser
-docker compose exec web python manage.py seed_dev
+docker compose exec rzdo python manage.py createsuperuser
+docker compose exec rzdo python manage.py seed_dev
 ```
 
 **Then connect the server's nginx and add HTTPS.** This is needed only once:
@@ -779,17 +779,26 @@ docker compose run --rm llm-worker python manage.py run_llm_worker --once
 docker compose --profile scheduler --profile llm stop redis celery-worker celery-beat llm-worker
 ```
 
-For crawled articles to reach the queue by themselves, also set `LLM_QUEUE_ENABLED=True` in `.env` and run `docker compose up -d` so the web container picks it up. Add the same `--profile` flags you are using to that command, so the workers pick it up too. With it off, only the admin action sends articles to the queue.
+For crawled articles to reach the queue by themselves, also set `LLM_QUEUE_ENABLED=True` in `.env` and run `docker compose up -d` so the `rzdo` container picks it up. Add the same `--profile` flags you are using to that command, so the workers pick it up too. With it off, only the admin action sends articles to the queue.
 
 **Other useful commands:**
 
 ```bash
 docker compose ps                  # what is running
-docker compose logs -f web         # follow the web logs
+docker compose logs -f rzdo        # follow the app logs
 docker compose exec db psql -U rzdo rzdo
 ```
 
-Restarting `web` interrupts any manual crawl in progress. The run is marked *interrupted*, and the next run picks up from the source's last completed crawl. `docker compose down -v` deletes the database volume.
+Restarting `rzdo` interrupts any manual crawl in progress. The run is marked *interrupted*, and the next run picks up from the source's last completed crawl.
+
+**Resetting the database.** This permanently deletes all data, including Redis's queued articles:
+
+```bash
+docker compose --profile "*" down -v --remove-orphans
+docker compose up -d
+docker compose exec rzdo python manage.py createsuperuser
+docker compose exec rzdo python manage.py seed_dev
+```
 
 ---
 

@@ -48,8 +48,9 @@ services:
       db:
         condition: service_healthy
 
-  web:
+  rzdo:
     <<: *app
+    container_name: rzdo
     shm_size: 1gb # Chromium crashes with Docker's default 64 MB
     depends_on:
       migrate:
@@ -71,7 +72,7 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
-      web:
+      rzdo:
         condition: service_healthy
 
   redis:
